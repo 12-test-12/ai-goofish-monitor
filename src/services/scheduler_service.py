@@ -3,7 +3,10 @@
 负责管理定时任务的调度
 """
 from datetime import datetime
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+except ImportError:
+    AsyncIOScheduler = None
 from typing import List
 
 from src.core.cron_utils import build_cron_trigger
@@ -15,6 +18,8 @@ class SchedulerService:
     """调度服务"""
 
     def __init__(self, process_service: ProcessService):
+        if AsyncIOScheduler is None:
+            raise ImportError("apscheduler is required: pip install apscheduler")
         self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
         self.process_service = process_service
 

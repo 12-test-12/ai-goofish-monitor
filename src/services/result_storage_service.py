@@ -119,7 +119,12 @@ def _query_scope(conn, filename, ai_only=False, keyword_only=False, include_hidd
     if not include_hidden:
         where += " AND status = 'active'"
         if keywords:
-            conn.create_function("is_blacklisted", 1, lambda raw: bool(match_blacklist_keywords(json.loads(raw), keywords)))
+            def _check_blacklisted(raw):
+                try:
+                    return bool(match_blacklist_keywords(json.loads(raw), keywords))
+                except Exception:
+                    return False
+            conn.create_function("is_blacklisted", 1, _check_blacklisted)
             where += " AND is_blacklisted(raw_json) = 0"
     return where, params, keywords
 
@@ -387,7 +392,13 @@ def _load_result_summary_sync(filename: str) -> dict | None:
             row = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} {extra} ORDER BY crawl_time DESC, id DESC LIMIT 1", params).fetchone()
             return _decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) if row else None
         latest_record = latest()
-        return {**dict(counts), "latest_crawl_time": latest_record.get("爬取时间"),
+        counts_dict = {
+            "total_items": int(counts["total_items"] or 0),
+            "recommended_items": int(counts["recommended_items"] or 0),
+            "ai_recommended_items": int(counts["ai_recommended_items"] or 0),
+            "keyword_recommended_items": int(counts["keyword_recommended_items"] or 0),
+        }
+        return {**counts_dict, "latest_crawl_time": latest_record.get("爬取时间") if latest_record else None,
                 "latest_record": latest_record, "latest_recommendation": latest("AND is_recommended = 1")}
 
 

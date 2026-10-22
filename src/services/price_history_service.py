@@ -168,7 +168,8 @@ def load_price_snapshots(
         where = "keyword_slug = ?"
         params: list = [normalize_keyword_slug(keyword)]
         if item_ids is not None:
-            conn.execute("CREATE TEMP TABLE selected_items (item_id TEXT PRIMARY KEY)")
+            conn.execute("CREATE TEMP TABLE IF NOT EXISTS selected_items (item_id TEXT PRIMARY KEY)")
+            conn.execute("DELETE FROM selected_items")
             conn.executemany("INSERT INTO selected_items VALUES (?)", ((str(value),) for value in item_ids))
             where += " AND item_id IN (SELECT item_id FROM selected_items)"
         latest = conn.execute(f"SELECT snapshot_time, run_id FROM price_snapshots WHERE {where} ORDER BY snapshot_time DESC, id DESC LIMIT 1", params).fetchone()

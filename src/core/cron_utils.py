@@ -5,7 +5,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from apscheduler.triggers.cron import CronTrigger
+try:
+    from apscheduler.triggers.cron import CronTrigger
+except ImportError:
+    CronTrigger = None
 
 CRON_ALIASES = {
     "@yearly": "0 0 1 1 *",
@@ -39,7 +42,9 @@ def build_cron_trigger(
     expression: str,
     *,
     timezone=None,
-) -> CronTrigger:
+) -> Optional[CronTrigger]:
+    if CronTrigger is None:
+        raise ImportError('apscheduler is required for build_cron_trigger: pip install apscheduler')
     normalized = normalize_cron_expression(expression)
     if normalized is None:
         raise ValueError(CRON_FORMAT_HINT)

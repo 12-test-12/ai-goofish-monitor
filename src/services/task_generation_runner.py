@@ -1,6 +1,7 @@
 """
 任务生成作业执行器
 """
+from __future__ import annotations
 import os
 from uuid import uuid4
 
@@ -8,7 +9,9 @@ import aiofiles
 
 from src.domain.models.task import TaskCreate, TaskGenerateRequest
 from src.prompt_utils import generate_criteria
-from src.services.scheduler_service import SchedulerService
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_service import TaskService
 from src.infrastructure.paths import safe_child_path
