@@ -75,8 +75,11 @@ class LoginRequiredError(Exception):
     """Raised when Goofish redirects to the passport/mini_login flow."""
 
 
-def _raise_for_api_failure(payload: dict) -> None:
-    result = str(payload.get("ret") or "")
+def _raise_for_api_failure(payload: Optional[dict]) -> None:
+    if not isinstance(payload, dict):
+        return
+    ret = payload.get("ret")
+    result = str(ret if ret is not None else "")
     if "FAIL_SYS_USER_VALIDATE" in result:
         raise RiskControlError("FAIL_SYS_USER_VALIDATE")
     if "FAIL_SYS_SESSION_EXPIRED" in result:
@@ -762,7 +765,11 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
                 # 捕获初始搜索的API数据
                 initial_response = await initial_response_info.value
-                _raise_for_api_failure(await initial_response.json())
+                if initial_response and getattr(initial_response, "ok", True):
+                    try:
+                        _raise_for_api_failure(await initial_response.json())
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
                 # 等待页面加载出关键筛选元素，以确认已成功进入搜索结果页
                 try:

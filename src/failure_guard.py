@@ -159,6 +159,7 @@ class FailureGuard:
             or _as_int(os.getenv("TASK_FAILURE_PAUSE_SECONDS"), 24 * 60 * 60),
         )
         self.tz_name = tz_name or os.getenv("TASK_FAILURE_TZ") or "Asia/Shanghai"
+        self._migrated_keys = set()
 
     def _load(self) -> dict:
         data = _read_json_file(self.path)
@@ -174,6 +175,8 @@ class FailureGuard:
         if task_id is None:
             return task_name
         key = f"task-id:{task_id}"
+        if key in self._migrated_keys:
+            return key
         # Reading may quarantine corrupt data, so readers use the writer lock too.
         with FileLock(f"{self.path}.lock"):
             data = self._load()
@@ -181,6 +184,7 @@ class FailureGuard:
             if key not in tasks and isinstance(tasks.get(task_name), dict):
                 tasks[key] = dict(tasks[task_name])
                 self._save(data)
+            self._migrated_keys.add(key)
         return key
 
     def _update_task(self, task_key: str, updater) -> dict:
