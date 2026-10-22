@@ -1,0 +1,5 @@
+# Gitleaks ignore file
+# Format: Add the fingerprint or commit:path:rule-id:line of any verified false-positive finding.
+# Example:
+# 3068e404b8686d1d42a983b6833c82ce0efae095:tests/unit/test_ai_client.py:generic-api-key:25
+

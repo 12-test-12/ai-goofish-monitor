@@ -27,14 +27,26 @@ def check_reports(directory: Path, min_score: float = 7.0) -> tuple[int, int]:
                     raise ValueError(f"CodeQL analysis did not complete: {report}")
                 if any(note.get("level") == "error" for note in invocation.get("toolExecutionNotifications", [])):
                     raise ValueError(f"CodeQL reported an execution error: {report}")
-            rules = run["tool"]["driver"].get("rules", [])
-            rules_by_id = {rule["id"]: rule for rule in rules}
+            driver = run.get("tool", {}).get("driver", {})
+            rules = driver.get("rules", [])
+            rules_by_id = {rule["id"]: rule for rule in rules if isinstance(rule, dict) and "id" in rule}
+            for extension in run.get("tool", {}).get("extensions", []):
+                if isinstance(extension, dict):
+                    for rule in extension.get("rules", []):
+                        if isinstance(rule, dict) and "id" in rule and rule["id"] not in rules_by_id:
+                            rules_by_id[rule["id"]] = rule
             results = run.get("results")
             if not isinstance(results, list):
                 raise ValueError(f"SARIF results are missing: {report}")
             for result in results:
+                # Skip findings that have been explicitly suppressed in source code or baseline
+                suppressions = result.get("suppressions")
+                if suppressions and all(isinstance(s, dict) and s.get("status") in (None, "accepted") for s in suppressions):
+                    continue
                 rule_id = result.get("ruleId")
                 if rule_id is not None:
+                    if rule_id not in rules_by_id:
+                        raise KeyError(f"Rule ID '{rule_id}' not found in SARIF rules or extensions: {report}")
                     rule = rules_by_id[rule_id]
                 else:
                     index = result["ruleIndex"]

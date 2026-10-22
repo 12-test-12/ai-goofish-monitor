@@ -46,7 +46,7 @@ CodeQL 完成分析和上传告警本身不代表没有高危问题，因此额�
 - 仓库 **Security → Code scanning**：查看 CodeQL 告警、规则与代码位置。
 - **Quality gate → Summary**：查看各检查的最终状态。
 
-密钥扫描使用 `--redact=100`，不在日志和扫描报告里输出匹配到的密钥原文。不要将真实 `.env`、cookies 或运行数据提交到 Git。
+密钥扫描使用 `--redact=100`，不在日志和扫描报告里输出匹配到的密钥原文。不要将真实 `.env`、cookies 或运行数据提交到 Git。若测试数据等存在误报，可在 `.gitleaksignore` 中记录对应的指纹进行豁免。
 
 ## 权限与仓库设置
 

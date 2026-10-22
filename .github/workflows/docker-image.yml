@@ -189,7 +189,7 @@ jobs:
         run: |
           mkdir -p ../reports
           npm audit --package-lock-only --audit-level=high --fetch-timeout=30000 \
-            --fetch-retries=1 --json > ../reports/npm-audit.json
+            --fetch-retries=3 --json > ../reports/npm-audit.json
       - name: Install locked frontend dependencies
         id: install
         if: ${{ !cancelled() }}

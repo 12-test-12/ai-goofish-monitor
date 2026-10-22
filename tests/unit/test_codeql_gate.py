@@ -38,6 +38,35 @@ def test_codeql_gate_resolves_rule_index(tmp_path):
     assert check_reports(tmp_path) == (1, 1)
 
 
+def test_codeql_gate_resolves_extension_rules(tmp_path):
+    ext_rule = {"id": "py/ext-rule", "properties": {"security-severity": "8.5"}}
+    run = {
+        "tool": {
+            "driver": {"rules": []},
+            "extensions": [{"name": "codeql-ext-pack", "rules": [ext_rule]}],
+        },
+        "results": [{"ruleId": ext_rule["id"]}],
+    }
+    path = tmp_path / "python.sarif"
+    path.write_text(json.dumps({"version": "2.1.0", "runs": [run]}), encoding="utf-8")
+    assert check_reports(tmp_path) == (1, 1)
+
+
+def test_codeql_gate_ignores_suppressed_findings(tmp_path):
+    write_report(
+        tmp_path,
+        score="9.0",
+        results=[
+            {
+                "ruleId": "py/test-rule",
+                "suppressions": [{"kind": "inSource", "status": "accepted"}],
+            }
+        ],
+    )
+    assert check_reports(tmp_path) == (0, 0)
+    assert main([str(tmp_path)]) == 0
+
+
 def test_codeql_gate_checks_every_report_and_run(tmp_path):
     first = write_report(tmp_path, score="1.0")
     first.rename(tmp_path / "low.sarif")
