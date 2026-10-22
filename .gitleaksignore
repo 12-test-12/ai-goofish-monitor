@@ -3,3 +3,9 @@
 # Example:
 # 3068e404b8686d1d42a983b6833c82ce0efae095:tests/unit/test_ai_client.py:generic-api-key:25
 
+# Verified 2026-10-22: historical localhost curl example using the documented
+# default admin/admin123 credentials, not a deployment secret. The match starts
+# on the comment at line 77; the curl example itself is on line 78.
+# Keep this exact commit/path/rule/line fingerprint; do not ignore the whole rule.
+2c4b6a4b7508f92f7f34dd60202396dd8b04524e:AUTH_README.md:curl-auth-user:77
+

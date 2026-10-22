@@ -55,6 +55,8 @@ Gitleaks 8.24.2 不支持 `--timeout`；超时通过扫描 step 的 `timeout-min
 
 密钥扫描使用 `--redact=100`，不在日志和扫描报告里输出匹配到的密钥原文。不要将真实 `.env`、cookies 或运行数据提交到 Git。若测试数据等存在误报，可在 `.gitleaksignore` 中记录对应的指纹进行豁免。
 
+已核实的历史示例：提交 `2c4b6a4b7508f92f7f34dd60202396dd8b04524e` 中 `AUTH_README.md` 的 localhost curl 请求使用项目公开的默认 `admin/admin123`，命中 `curl-auth-user`。报告起始行为 77（注释），curl 示例在 78 行。仅在 `.gitleaksignore` 中豁免该提交、路径、规则和行号的完整指纹，不豁免整个文件或规则。文件已删除仍会被全历史扫描检出，因此重新运行旧提交不会应用此修复，必须检查包含本次修改的新提交。
+
 ## 权限与仓库设置
 
 工作流默认仅 `contents: read`，checkout 不保存凭据。CodeQL job 单独使用 `security-events: write` 上传告警；只有发布 job 具有 `packages: write`。审计无需额外 AI API Key 或第三方审计服务密钥。CodeQL Action 固定为已使用过的 v4.39.1 完整提交 SHA，Gitleaks 下载固定版本并校验发布方 checksum。
