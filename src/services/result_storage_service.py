@@ -111,6 +111,19 @@ def _is_record_visible(record: dict) -> bool:
     return record.get("_effective_hidden") is not True
 
 
+def _query_scope(conn, filename, ai_only=False, keyword_only=False, include_hidden=False):
+    where, params = _build_query_conditions(
+        filename=filename, ai_recommended_only=ai_only, keyword_recommended_only=keyword_only,
+    )
+    keywords = _load_blacklist_keywords_from_conn(conn, filename)
+    if not include_hidden:
+        where += " AND status = 'active'"
+        if keywords:
+            conn.create_function("is_blacklisted", 1, lambda raw: bool(match_blacklist_keywords(json.loads(raw), keywords)))
+            where += " AND is_blacklisted(raw_json) = 0"
+    return where, params, keywords
+
+
 def _load_filtered_records_from_conn(
     conn,
     *,
@@ -121,10 +134,8 @@ def _load_filtered_records_from_conn(
     sort_order: str,
     include_hidden: bool,
 ) -> list[dict]:
-    where_clause, params = _build_query_conditions(
-        filename=filename,
-        ai_recommended_only=ai_recommended_only,
-        keyword_recommended_only=keyword_recommended_only,
+    where_clause, params, blacklist_keywords = _query_scope(
+        conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden,
     )
     order_clause = _sort_expression(sort_by, sort_order)
     rows = conn.execute(
@@ -135,8 +146,7 @@ def _load_filtered_records_from_conn(
         ORDER BY {order_clause}
         """,
         tuple(params),
-    ).fetchall()
-    blacklist_keywords = _load_blacklist_keywords_from_conn(conn, filename)
+    )
 
     records: list[dict] = []
     for row in rows:
@@ -164,13 +174,13 @@ def _save_result_record_sync(record: dict, keyword: str) -> bool:
         keyword_hit_count = 0
 
     with sqlite_connection() as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT OR IGNORE INTO result_items (
                 result_filename, keyword, task_name, crawl_time, publish_time, price,
                 price_display, item_id, title, link, link_unique_key, seller_nickname,
-                is_recommended, analysis_source, keyword_hit_count, raw_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_recommended, analysis_source, keyword_hit_count, raw_json, task_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 build_result_filename(keyword),
@@ -189,19 +199,20 @@ def _save_result_record_sync(record: dict, keyword: str) -> bool:
                 analysis.get("analysis_source"),
                 keyword_hit_count,
                 json.dumps(record, ensure_ascii=False),
+                record.get("任务ID") if record.get("任务ID") is not None else -1,
             ),
         )
         conn.commit()
-    return True
+    return cursor.rowcount > 0
 
 
-def load_processed_link_keys(keyword: str) -> set[str]:
+def load_processed_link_keys(keyword: str, task_id: int | None = None) -> set[str]:
     bootstrap_sqlite_storage()
     filename = build_result_filename(keyword)
     with sqlite_connection() as conn:
         rows = conn.execute(
-            "SELECT link_unique_key FROM result_items WHERE result_filename = ?",
-            (filename,),
+            "SELECT link_unique_key FROM result_items WHERE result_filename = ? AND task_id = ?",
+            (filename, task_id if task_id is not None else -1),
         ).fetchall()
     return {str(row["link_unique_key"]) for row in rows if row["link_unique_key"]}
 
@@ -290,17 +301,15 @@ def _query_result_records_sync(
     bootstrap_sqlite_storage()
     offset = max(page - 1, 0) * limit
     with sqlite_connection() as conn:
-        records = _load_filtered_records_from_conn(
-            conn,
-            filename=filename,
-            ai_recommended_only=ai_recommended_only,
-            keyword_recommended_only=keyword_recommended_only,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            include_hidden=include_hidden,
+        conn.execute("BEGIN")
+        where, params, keywords = _query_scope(conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden)
+        total = conn.execute(f"SELECT COUNT(*) FROM result_items WHERE {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order)} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
         )
-    total = len(records)
-    return total, records[offset: offset + limit]
+        records = [_decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) for row in rows]
+    return total, records
 
 
 async def load_all_result_records(
@@ -365,41 +374,21 @@ async def load_result_summary(filename: str) -> dict | None:
 def _load_result_summary_sync(filename: str) -> dict | None:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        visible_records = _load_filtered_records_from_conn(
-            conn,
-            filename=filename,
-            ai_recommended_only=False,
-            keyword_recommended_only=False,
-            sort_by="crawl_time",
-            sort_order="desc",
-            include_hidden=False,
-        )
-    if not visible_records:
-        return None
-
-    recommended_records = [
-        record
-        for record in visible_records
-        if (record.get("ai_analysis", {}) or {}).get("is_recommended") is True
-    ]
-    ai_recommended_items = 0
-    keyword_recommended_items = 0
-    for record in recommended_records:
-        source = (record.get("ai_analysis", {}) or {}).get("analysis_source")
-        if source == "ai":
-            ai_recommended_items += 1
-        elif source == "keyword":
-            keyword_recommended_items += 1
-
-    return {
-        "total_items": len(visible_records),
-        "recommended_items": len(recommended_records),
-        "ai_recommended_items": ai_recommended_items,
-        "keyword_recommended_items": keyword_recommended_items,
-        "latest_crawl_time": visible_records[0].get("爬取时间"),
-        "latest_record": visible_records[0],
-        "latest_recommendation": recommended_records[0] if recommended_records else None,
-    }
+        conn.execute("BEGIN")
+        where, params, keywords = _query_scope(conn, filename)
+        counts = conn.execute(f"""SELECT COUNT(*) AS total_items,
+            SUM(is_recommended) AS recommended_items,
+            SUM(is_recommended = 1 AND analysis_source = 'ai') AS ai_recommended_items,
+            SUM(is_recommended = 1 AND analysis_source = 'keyword') AS keyword_recommended_items
+            FROM result_items WHERE {where}""", params).fetchone()
+        if not counts["total_items"]:
+            return None
+        def latest(extra=""):
+            row = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} {extra} ORDER BY crawl_time DESC, id DESC LIMIT 1", params).fetchone()
+            return _decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) if row else None
+        latest_record = latest()
+        return {**dict(counts), "latest_crawl_time": latest_record.get("爬取时间"),
+                "latest_record": latest_record, "latest_recommendation": latest("AND is_recommended = 1")}
 
 
 async def update_item_status(filename: str, item_id: str, status: str) -> bool:
@@ -457,19 +446,5 @@ def _save_result_blacklist_keywords_sync(filename: str, keywords: list[str]) -> 
 def load_visible_result_item_ids(filename: str) -> set[str]:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        visible_records = _load_filtered_records_from_conn(
-            conn,
-            filename=filename,
-            ai_recommended_only=False,
-            keyword_recommended_only=False,
-            sort_by="crawl_time",
-            sort_order="desc",
-            include_hidden=False,
-        )
-    item_ids: set[str] = set()
-    for record in visible_records:
-        product = record.get("商品信息", {}) or {}
-        item_id = str(product.get("商品ID") or "").strip()
-        if item_id:
-            item_ids.add(item_id)
-    return item_ids
+        where, params, _ = _query_scope(conn, filename)
+        return {str(row[0]).strip() for row in conn.execute(f"SELECT DISTINCT item_id FROM result_items WHERE {where} AND item_id IS NOT NULL AND item_id != ''", params)}

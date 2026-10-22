@@ -2,6 +2,7 @@
 任务生成作业执行器
 """
 import os
+from uuid import uuid4
 
 import aiofiles
 
@@ -17,7 +18,7 @@ def build_criteria_filename(keyword: str) -> str:
         char for char in keyword.lower().replace(" ", "_")
         if char.isalnum() or char in "_-"
     ).rstrip()
-    filename = f"{safe_keyword}_criteria.txt"
+    filename = f"{safe_keyword[:80] or 'task'}_{uuid4().hex}_criteria.txt"
     return f"prompts/{filename}"
 
 
@@ -51,8 +52,18 @@ async def save_generated_criteria(output_filename: str, generated_criteria: str)
 
     os.makedirs("prompts", exist_ok=True)
     safe_path = safe_child_path("prompts", os.path.basename(output_filename))
-    async with aiofiles.open(safe_path, "w", encoding="utf-8") as file:
-        await file.write(generated_criteria)
+    created = False
+    try:
+        async with aiofiles.open(safe_path, "x", encoding="utf-8") as file:
+            created = True
+            await file.write(generated_criteria)
+    except BaseException:
+        if created:
+            try:
+                os.remove(safe_path)
+            except OSError:
+                pass
+        raise
 
 
 async def reload_scheduler(
@@ -81,6 +92,8 @@ async def run_ai_generation_job(
     generation_service: TaskGenerationService,
 ) -> None:
     output_filename = build_criteria_filename(req.keyword)
+    criteria_saved = False
+    task = None
     try:
         await advance_job(
             generation_service,
@@ -105,6 +118,7 @@ async def run_ai_generation_job(
             f"正在保存分析标准到 {output_filename}。",
         )
         await save_generated_criteria(output_filename, generated_criteria)
+        criteria_saved = True
 
         await advance_job(
             generation_service,
@@ -113,12 +127,16 @@ async def run_ai_generation_job(
             "分析标准已生成，正在创建任务记录。",
         )
         task = await task_service.create_task(build_task_create(req, output_filename))
-        await reload_scheduler(task_service, scheduler_service)
+        try:
+            await reload_scheduler(task_service, scheduler_service)
+        except Exception as exc:
+            await generation_service.complete(job_id, task, f"任务“{req.task_name}”已创建，但定时调度刷新失败，请重启服务: {exc}")
+            return
         await generation_service.complete(job_id, task, f"任务“{req.task_name}”创建完成。")
     except Exception as exc:
         try:
             safe_path = safe_child_path("prompts", os.path.basename(output_filename))
-            if os.path.exists(safe_path):
+            if criteria_saved and task is None and os.path.exists(safe_path):
                 os.remove(safe_path)
         except (OSError, ValueError):
             # A rejected path must never prevent the job from reaching failed.

@@ -54,16 +54,26 @@ class ItemAnalysisDispatcher:
         self._notifier = notifier
         self._saver = saver
         self._tasks: set[asyncio.Task] = set()
+        self._errors: list[BaseException] = []
         self.completed_count = 0
 
     def submit(self, job: ItemAnalysisJob) -> None:
         task = asyncio.create_task(self._process_with_limit(job))
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._finished)
+
+    def _finished(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            self._errors.append(task.exception())
 
     async def join(self) -> None:
         while self._tasks:
-            await asyncio.gather(*tuple(self._tasks))
+            await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+        if self._errors:
+            first = self._errors[0]
+            self._errors.clear()
+            raise first
 
     async def cancel(self) -> None:
         tasks = tuple(self._tasks)
@@ -72,6 +82,7 @@ class ItemAnalysisDispatcher:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.difference_update(tasks)
+        self._errors.clear()
 
     async def _process_with_limit(self, job: ItemAnalysisJob) -> None:
         async with self._semaphore:
@@ -84,7 +95,7 @@ class ItemAnalysisDispatcher:
         record["ai_analysis"] = await self._build_analysis_result(job, record)
         if await self._saver(record, job.keyword):
             self.completed_count += 1
-        await self._notify_if_recommended(item_data, record["ai_analysis"])
+            await self._notify_if_recommended(item_data, record["ai_analysis"])
 
     async def _load_seller_info(self, job: ItemAnalysisJob) -> dict:
         seller_info = {}

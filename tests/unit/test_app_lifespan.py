@@ -38,7 +38,8 @@ class _FakeProcessService:
         self.stop_all_called = True
 
 
-def test_lifespan_cleans_task_logs_on_startup(monkeypatch):
+def test_lifespan_cleans_task_logs_on_startup(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     called = {}
     fake_scheduler = _FakeSchedulerService()
     fake_process = _FakeProcessService()

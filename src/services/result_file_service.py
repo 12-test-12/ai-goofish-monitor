@@ -17,16 +17,16 @@ def validate_result_filename(filename: str) -> None:
 
 
 def enrich_records_with_price_insight(records: list[dict], filename: str) -> list[dict]:
-    snapshots = load_price_snapshots(normalize_keyword_from_filename(filename))
+    if not records:
+        return records
+    keyword = normalize_keyword_from_filename(filename)
+    page_ids = {str((record.get("商品信息") or {}).get("商品ID") or "") for record in records}
+    snapshots = load_price_snapshots(keyword, item_ids=page_ids)
     if not snapshots:
         return records
 
     visible_item_ids = load_visible_result_item_ids(filename)
-    visible_snapshots = [
-        snapshot
-        for snapshot in snapshots
-        if str(snapshot.get("item_id") or "") in visible_item_ids
-    ]
+    visible_snapshots = load_price_snapshots(keyword, item_ids=visible_item_ids, latest_run_only=True)
     enriched = []
     for record in records:
         info = record.get("商品信息", {}) or {}

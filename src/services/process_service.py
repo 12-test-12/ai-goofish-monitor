@@ -88,13 +88,8 @@ class ProcessService:
         return log_file_path, log_file_handle
 
     def _build_spawn_command(self, task_id: int) -> list[str]:
-        command = [
-            sys.executable,
-            "-u",
-            "spider_v2.py",
-            "--task-id",
-            str(task_id),
-        ]
+        entry = [sys.executable, "--spider-worker"] if getattr(sys, "frozen", False) else [sys.executable, "-u", "spider_v2.py"]
+        command = [*entry, "--task-id", str(task_id)]
         debug_limit = str(os.getenv(SPIDER_DEBUG_LIMIT_ENV, "")).strip()
         if debug_limit.isdigit() and int(debug_limit) > 0:
             command.extend(["--debug-limit", debug_limit])
@@ -110,8 +105,11 @@ class ProcessService:
         child_env = os.environ.copy()
         child_env["PYTHONIOENCODING"] = "utf-8"
         child_env["PYTHONUTF8"] = "1"
+        command = self._build_spawn_command(task_id)
+        if getattr(sys, "frozen", False):
+            command.extend(["--worker-log", os.path.abspath(log_file_handle.name)])
         return await asyncio.create_subprocess_exec(
-            *self._build_spawn_command(task_id),
+            *command,
             stdout=log_file_handle,
             stderr=log_file_handle,
             preexec_fn=preexec_fn,

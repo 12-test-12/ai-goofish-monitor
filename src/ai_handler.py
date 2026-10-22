@@ -112,17 +112,32 @@ def _extract_message_content_types(message: dict) -> list[str]:
 @retry_on_failure(retries=2, delay=3)
 async def _download_single_image(url, save_path):
     """一个带重试的内部函数，用于异步下载单个图片。"""
-    loop = asyncio.get_running_loop()
-    # 使用 run_in_executor 运行同步的 requests 代码，避免阻塞事件循环
-    response = await loop.run_in_executor(
-        None,
-        lambda: requests.get(url, headers=IMAGE_DOWNLOAD_HEADERS, timeout=20, stream=True)
-    )
-    response.raise_for_status()
-    with open(save_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    return save_path
+    worker = asyncio.create_task(asyncio.to_thread(_download_image_sync, url, save_path))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # Do not release the image lease while a download thread is still writing.
+        try:
+            await worker
+        except Exception:
+            pass
+        raise
+
+
+def _download_image_sync(url, save_path):
+    # Headers, streaming body and disk writes all run outside the event loop.
+    partial_path = f"{save_path}.part"
+    try:
+        with requests.get(url, headers=IMAGE_DOWNLOAD_HEADERS, timeout=20, stream=True) as response:
+            response.raise_for_status()
+            with open(partial_path, "wb") as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
+        os.replace(partial_path, save_path)
+        return save_path
+    finally:
+        if os.path.exists(partial_path):
+            os.remove(partial_path)
 
 
 def _build_image_save_path(

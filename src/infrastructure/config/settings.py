@@ -107,6 +107,7 @@ class AppSettings(_EnvSettings):
     web_cookie_secure: bool = _env_field(False, "WEB_COOKIE_SECURE")
     web_allowed_origins: str = _env_field("", "WEB_ALLOWED_ORIGINS")
     task_log_retention_days: int = _env_field(7, "TASK_LOG_RETENTION_DAYS", ge=1)
+    image_cache_max_age_hours: int = _env_field(24, "IMAGE_CACHE_MAX_AGE_HOURS", ge=0)
 
     # 文件路径配置
     config_file: str = "config.json"

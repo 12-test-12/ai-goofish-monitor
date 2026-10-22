@@ -50,7 +50,7 @@ def test_detail_risk_control_stops_before_next_item_and_cancels_analysis(tmp_pat
     monkeypatch.setattr(scraper, "async_playwright", playwright)
     monkeypatch.setattr(scraper, "load_state_files", lambda _: [])
     monkeypatch.setattr(scraper, "load_price_snapshots", lambda _: [])
-    monkeypatch.setattr(scraper, "load_processed_link_keys", lambda _: set())
+    monkeypatch.setattr(scraper, "load_processed_link_keys", lambda *_: set())
     monkeypatch.setattr(scraper, "record_market_snapshots", lambda **kw: [])
     monkeypatch.setattr(scraper, "random_sleep", AsyncMock())
     monkeypatch.setattr(scraper, "prepare_chromium_launch_args", lambda: [])

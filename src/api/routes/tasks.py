@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import List
 import os
-import aiofiles
 from src.api.dependencies import (
     get_process_service,
     get_scheduler_service,
@@ -18,6 +17,8 @@ from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_generation_runner import (
     build_task_create,
+    build_criteria_filename,
+    save_generated_criteria,
     run_ai_generation_job,
 )
 from src.services.task_payloads import serialize_task, serialize_tasks
@@ -28,6 +29,7 @@ from src.services.account_strategy_service import normalize_account_strategy
 from src.infrastructure.persistence.storage_names import build_result_filename
 from src.services.price_history_service import delete_price_snapshots
 from src.services.result_storage_service import delete_result_file_records
+from src.infrastructure.paths import safe_child_path
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 async def _reload_scheduler_if_needed(
@@ -145,6 +147,7 @@ async def update_task(
     scheduler_service: SchedulerService = Depends(get_scheduler_service),
 ):
     """更新任务"""
+    generated_path = None
     try:
         existing_task = await service.get_task(task_id)
         if not existing_task:
@@ -177,11 +180,7 @@ async def update_task(
                 )
                 if not str(description_for_ai or "").strip():
                     raise HTTPException(status_code=400, detail="AI 模式下详细需求不能为空。")
-                safe_keyword = "".join(
-                    c for c in existing_task.keyword.lower().replace(' ', '_')
-                    if c.isalnum() or c in "_-"
-                ).rstrip()
-                output_filename = f"prompts/{safe_keyword}_criteria.txt"
+                output_filename = build_criteria_filename(task_update.keyword or existing_task.keyword)
                 print(f"目标文件路径: {output_filename}")
                 print("开始调用 AI 生成新的分析标准...")
                 generated_criteria = await generate_criteria(
@@ -192,9 +191,8 @@ async def update_task(
                     print("AI 返回的内容为空")
                     raise HTTPException(status_code=500, detail="AI 未能生成分析标准，返回内容为空。")
                 print(f"保存新的分析标准到: {output_filename}")
-                os.makedirs("prompts", exist_ok=True)
-                async with aiofiles.open(output_filename, 'w', encoding='utf-8') as f:
-                    await f.write(generated_criteria)
+                await save_generated_criteria(output_filename, generated_criteria)
+                generated_path = output_filename
                 print(f"新的分析标准已保存")
                 task_update.ai_prompt_criteria_file = output_filename
                 print(f"已更新 ai_prompt_criteria_file 字段为: {output_filename}")
@@ -206,7 +204,15 @@ async def update_task(
                 import traceback
                 print(traceback.format_exc())
                 raise HTTPException(status_code=500, detail=error_msg)
-        task = await service.update_task(task_id, task_update)
+        try:
+            task = await service.update_task(task_id, task_update)
+        except BaseException:
+            if generated_path:
+                try:
+                    os.remove(safe_child_path("prompts", os.path.basename(generated_path)))
+                except (OSError, ValueError):
+                    pass
+            raise
         await _reload_scheduler_if_needed(service, scheduler_service)
         return {"message": "任务更新成功", "task": serialize_task(task, scheduler_service)}
     except ValueError as e:

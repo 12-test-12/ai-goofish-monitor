@@ -78,6 +78,7 @@ def test_rejected_generated_prompt_path_marks_job_failed_without_deleting_target
     except OSError:
         pytest.skip("Creating symlinks requires Windows developer mode or privileges")
     monkeypatch.setattr(task_generation_runner, "generate_criteria", AsyncMock(return_value="criteria"))
+    monkeypatch.setattr(task_generation_runner, "build_criteria_filename", lambda _: "prompts/camera_criteria.txt")
     generation_service = SimpleNamespace(advance=AsyncMock(), complete=AsyncMock(), fail=AsyncMock())
     task_service = SimpleNamespace(create_task=AsyncMock())
     asyncio.run(task_generation_runner.run_ai_generation_job(

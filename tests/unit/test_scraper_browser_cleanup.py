@@ -34,7 +34,7 @@ def test_scraper_closes_browser_on_initialization_or_analysis_failure(monkeypatc
     monkeypatch.setattr(scraper, "STATE_FILE", str(state_file))
     monkeypatch.setattr(scraper, "load_state_files", lambda _: [])
     monkeypatch.setattr(scraper, "load_price_snapshots", lambda _: [])
-    monkeypatch.setattr(scraper, "load_processed_link_keys", lambda _: set())
+    monkeypatch.setattr(scraper, "load_processed_link_keys", lambda *_: set())
     monkeypatch.setattr(scraper, "prepare_chromium_launch_args", lambda: [])
     monkeypatch.setattr(scraper, "ItemAnalysisDispatcher", lambda **kwargs: dispatcher)
     monkeypatch.setattr(scraper.FAILURE_GUARD, "should_skip_start", lambda *a, **kw: SimpleNamespace(skip=False))

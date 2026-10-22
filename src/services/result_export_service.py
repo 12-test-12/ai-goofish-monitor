@@ -26,6 +26,14 @@ EXPORT_HEADERS = [
 ]
 
 
+def _safe_csv_cell(value):
+    if isinstance(value, str) and value.lstrip(" \t\r\n\ufeff").startswith(("=", "+", "-", "@")):
+        return "'" + value
+    if isinstance(value, str) and value.startswith(("\t", "\r", "\n")):
+        return "'" + value
+    return value
+
+
 def build_results_csv(records: list[dict]) -> str:
     buffer = StringIO()
     writer = csv.DictWriter(buffer, fieldnames=EXPORT_HEADERS)
@@ -36,8 +44,7 @@ def build_results_csv(records: list[dict]) -> str:
         seller = record.get("卖家信息", {}) or {}
         ai_analysis = record.get("ai_analysis", {}) or {}
         price_insight = record.get("price_insight", {}) or {}
-        writer.writerow(
-            {
+        row = {
                 "任务名称": record.get("任务名称", ""),
                 "搜索关键字": record.get("搜索关键字", ""),
                 "商品ID": item.get("商品ID", ""),
@@ -55,7 +62,7 @@ def build_results_csv(records: list[dict]) -> str:
                 "性价比分数": ai_analysis.get("value_score", price_insight.get("deal_score", "")),
                 "性价比标签": ai_analysis.get("value_summary", price_insight.get("deal_label", "")),
                 "商品链接": item.get("商品链接", ""),
-            }
-        )
+        }
+        writer.writerow({key: _safe_csv_cell(value) for key, value in row.items()})
 
     return buffer.getvalue()

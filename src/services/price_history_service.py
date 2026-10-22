@@ -156,18 +156,38 @@ def record_market_snapshots(
     return records
 
 
-def load_price_snapshots(keyword: str) -> list[dict]:
+def load_price_snapshots(
+    keyword: str, *, window_days: int | None = DEFAULT_HISTORY_WINDOW_DAYS,
+    item_ids: set[str] | None = None, latest_run_only: bool = False, dedupe_daily: bool = False,
+) -> list[dict]:
+    if item_ids is not None and not item_ids:
+        return []
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM price_snapshots
-            WHERE keyword_slug = ?
-            ORDER BY snapshot_time ASC, id ASC
-            """,
-            (normalize_keyword_slug(keyword),),
-        ).fetchall()
+        conn.execute("BEGIN")
+        where = "keyword_slug = ?"
+        params: list = [normalize_keyword_slug(keyword)]
+        if item_ids is not None:
+            conn.execute("CREATE TEMP TABLE selected_items (item_id TEXT PRIMARY KEY)")
+            conn.executemany("INSERT INTO selected_items VALUES (?)", ((str(value),) for value in item_ids))
+            where += " AND item_id IN (SELECT item_id FROM selected_items)"
+        latest = conn.execute(f"SELECT snapshot_time, run_id FROM price_snapshots WHERE {where} ORDER BY snapshot_time DESC, id DESC LIMIT 1", params).fetchone()
+        if latest is None:
+            return []
+        if latest_run_only:
+            where += " AND run_id = ?"
+            params.append(latest["run_id"])
+        elif window_days is not None:
+            where += " AND julianday(snapshot_time) > julianday(?) - ?"
+            params.extend([latest["snapshot_time"], max(0, window_days) + 1])
+        if dedupe_daily:
+            query = f"""SELECT * FROM (SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY snapshot_day, item_id ORDER BY snapshot_time DESC, id DESC
+                ) AS row_number FROM price_snapshots WHERE {where})
+                WHERE row_number = 1 ORDER BY snapshot_time ASC, id ASC"""
+        else:
+            query = f"SELECT * FROM price_snapshots WHERE {where} ORDER BY snapshot_time ASC, id ASC"
+        rows = conn.execute(query, params).fetchall()
     snapshots: list[dict] = []
     for row in rows:
         snapshots.append(
@@ -367,13 +387,7 @@ def build_price_history_insights(
     window_days: int = DEFAULT_HISTORY_WINDOW_DAYS,
     visible_item_ids: Optional[set[str]] = None,
 ) -> dict:
-    snapshots = load_price_snapshots(keyword)
-    if visible_item_ids is not None:
-        snapshots = [
-            snapshot
-            for snapshot in snapshots
-            if str(snapshot.get("item_id") or "") in visible_item_ids
-        ]
+    snapshots = load_price_snapshots(keyword, window_days=window_days, item_ids=visible_item_ids, dedupe_daily=True)
     if not snapshots:
         return {
             "market_summary": _summarize_prices([]),
@@ -383,9 +397,8 @@ def build_price_history_insights(
         }
 
     recent_snapshots = _recent_window_snapshots(snapshots, window_days)
-    latest_run_id = str(snapshots[-1].get("run_id") or "")
     latest_run_snapshots = _dedupe_latest(
-        [record for record in snapshots if str(record.get("run_id") or "") == latest_run_id],
+        load_price_snapshots(keyword, item_ids=visible_item_ids, latest_run_only=True),
         "item_id",
     )
     latest_records_by_item = _dedupe_latest(recent_snapshots, "item_id")

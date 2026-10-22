@@ -66,7 +66,8 @@ SCHEMA_STATEMENTS = (
         keyword_hit_count INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         raw_json TEXT NOT NULL,
-        UNIQUE(result_filename, link_unique_key)
+        task_id INTEGER NOT NULL DEFAULT -1,
+        UNIQUE(result_filename, task_id, link_unique_key)
     )
     """,
     """
@@ -140,10 +141,29 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN IMMEDIATE")
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
     _migrate_result_items_status(conn)
+    _migrate_result_task_id(conn)
     conn.commit()
+
+
+def _migrate_result_task_id(conn: sqlite3.Connection) -> None:
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(result_items)")]
+    if "task_id" not in columns:
+        statement = next(sql for sql in SCHEMA_STATEMENTS if "CREATE TABLE IF NOT EXISTS result_items (" in sql)
+        conn.execute(statement.replace("result_items (", "result_items_v2 (", 1))
+        # Old records have ambiguous task ownership; retain them in the legacy scope.
+        column_list = ", ".join(columns)
+        conn.execute(f"INSERT INTO result_items_v2 ({column_list}) SELECT {column_list} FROM result_items")
+        conn.execute("DROP TABLE result_items")
+        conn.execute("ALTER TABLE result_items_v2 RENAME TO result_items")
+        for sql in SCHEMA_STATEMENTS:
+            if "CREATE INDEX" in sql and "ON result_items(" in sql:
+                conn.execute(sql)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_results_filename_status_crawl ON result_items(result_filename, status, crawl_time DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_results_task_links ON result_items(result_filename, task_id, link_unique_key)")
 
 
 def _migrate_result_items_status(conn: sqlite3.Connection) -> None:

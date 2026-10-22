@@ -1,4 +1,7 @@
 import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
 
 from src.services.item_analysis_dispatcher import (
     ItemAnalysisDispatcher,
@@ -129,3 +132,27 @@ def test_item_analysis_dispatcher_supports_keyword_mode_without_ai():
     asyncio.run(run())
     assert saved_records[0]["ai_analysis"]["analysis_source"] == "keyword"
     assert saved_records[0]["ai_analysis"]["is_recommended"] is True
+
+
+@pytest.mark.parametrize("save_result", [False, RuntimeError("save failed")])
+def test_dispatcher_never_notifies_unsaved_results_or_loses_background_failures(save_result):
+    notifier = AsyncMock()
+    saver = AsyncMock(side_effect=save_result) if isinstance(save_result, Exception) else AsyncMock(return_value=save_result)
+    dispatcher = ItemAnalysisDispatcher(
+        concurrency=1, skip_ai_analysis=True, seller_loader=AsyncMock(return_value={}),
+        image_downloader=AsyncMock(return_value=[]), ai_analyzer=AsyncMock(), notifier=notifier, saver=saver,
+    )
+    job = ItemAnalysisJob("camera", "same", "ai", False, "", (), {"商品信息": {"商品ID": "1"}}, None, None, "")
+
+    async def run():
+        dispatcher.submit(job)
+        # Let the worker finish before join; errors must remain observable.
+        await asyncio.sleep(0.01)
+        if isinstance(save_result, Exception):
+            with pytest.raises(RuntimeError, match="save failed"):
+                await dispatcher.join()
+        else:
+            await dispatcher.join()
+    asyncio.run(run())
+    notifier.assert_not_awaited()
+    assert dispatcher.completed_count == 0

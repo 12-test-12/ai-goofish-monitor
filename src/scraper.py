@@ -61,6 +61,7 @@ from src.services.price_history_service import (
 from src.services.result_storage_service import load_processed_link_keys
 from src.services.seller_profile_cache import SellerProfileCache
 from src.services.browser_pool import browser_slot
+from src.services.image_cache_service import task_image_lease
 from src.services.search_pagination import (
     advance_search_page,
     is_search_results_response,
@@ -545,6 +546,15 @@ async def scrape_user_profile(context, user_id: str) -> dict:
 
 
 async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
+    image_key = f"task-id:{task_config['id']}" if task_config.get("id") is not None else task_config.get("task_name", "default")
+    async with task_image_lease(image_key):
+        try:
+            return await _scrape_xianyu_impl(task_config, debug_limit)
+        finally:
+            cleanup_task_images(image_key)
+
+
+async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
     """
     【核心执行器】
     根据单个任务配置，异步爬取闲鱼商品数据，并对每个新发现的商品进行实时的、独立的AI分析和通知。
@@ -573,7 +583,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     history_seen_item_ids: set[str] = set()
     historical_snapshots = load_price_snapshots(keyword)
     result_filename = build_result_filename(keyword)
-    processed_links = load_processed_link_keys(keyword)
+    processed_links = load_processed_link_keys(keyword, task_config.get("id"))
     if processed_links:
         print(f"LOG: 发现已存在结果集 {result_filename}，已加载 {len(processed_links)} 个历史商品用于去重。")
     else:
@@ -1149,6 +1159,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
                                 # 构建基础记录
                                 final_record = {
+                                    "任务ID": task_config.get("id"),
                                     "爬取时间": datetime.now().isoformat(),
                                     "搜索关键字": keyword,
                                     "任务名称": task_config.get(
@@ -1317,7 +1328,6 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             except Exception as e:
                 print(f"发送任务暂停通知失败: {e}")
 
-        cleanup_task_images(image_task_key)
         return 0
 
     for attempt in range(1, attempt_limit + 1):
@@ -1381,8 +1391,5 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
     if last_error:
         await _notify_task_failure(task_config, last_error, cookie_path=last_state_path)
-
-    # 清理任务图片目录
-    cleanup_task_images(image_task_key)
 
     return processed_item_count

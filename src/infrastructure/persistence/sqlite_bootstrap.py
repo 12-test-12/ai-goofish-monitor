@@ -198,8 +198,8 @@ def _insert_result_record(conn, record: dict, *, keyword: str, filename: str) ->
         INSERT OR IGNORE INTO result_items (
             result_filename, keyword, task_name, crawl_time, publish_time, price,
             price_display, item_id, title, link, link_unique_key, seller_nickname,
-            is_recommended, analysis_source, keyword_hit_count, raw_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            is_recommended, analysis_source, keyword_hit_count, raw_json, task_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             result_filename,
@@ -218,6 +218,7 @@ def _insert_result_record(conn, record: dict, *, keyword: str, filename: str) ->
             analysis.get("analysis_source"),
             keyword_hit_count,
             json.dumps(record, ensure_ascii=False),
+            record.get("任务ID") if record.get("任务ID") is not None else -1,
         ),
     )
 
