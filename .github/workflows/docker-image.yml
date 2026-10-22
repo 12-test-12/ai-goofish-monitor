@@ -16,8 +16,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  security-events: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -82,18 +80,29 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
-      - name: Audit frontend dependencies (advisory)
+      - name: Audit frontend dependencies
         working-directory: web-ui
         run: |
           mkdir -p ../reports
+          audit_status=0
           npm audit --package-lock-only --audit-level=high --fetch-timeout=30000 \
-            --fetch-retries=3 --json > ../reports/npm-audit.json || true
+            --fetch-retries=3 --json > ../reports/npm-audit.json || audit_status=$?
+          if (( audit_status > 1 )); then
+            exit "$audit_status"
+          fi
+          python ../scripts/ci/check_npm_audit.py ../reports/npm-audit.json package-lock.json
       - name: Install frontend dependencies
+        id: install
+        if: ${{ !cancelled() }}
         working-directory: web-ui
         run: npm ci --no-audit --no-fund
       - name: Type check and build frontend
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: web-ui
         run: npm run build
+      - name: Run frontend security and toast regressions
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: node --test tests/frontend/ci-regressions.test.cjs
       - name: Upload frontend build dist artifact
         uses: actions/upload-artifact@v4
         with:
@@ -131,18 +140,18 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@793b778da9c9275a0f276522b27cb5fc14bba279 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           build-mode: none
           queries: security-extended
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@793b778da9c9275a0f276522b27cb5fc14bba279 # v4.39.1
         with:
           category: /language:${{ matrix.language }}
           output: reports/codeql
       - name: Check findings
-        run: python scripts/ci/check_codeql.py reports/codeql --min-score 7.0 --soft-fail
+        run: python scripts/ci/check_codeql.py reports/codeql --min-score 7.0
       - name: Preserve CodeQL SARIF
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,10 +189,11 @@ jobs:
           )
           echo "$tool_dir" >> "$GITHUB_PATH"
       - name: Scan git history for secrets
+        timeout-minutes: 5
         run: >-
           gitleaks git . --log-opts="--all" --redact=100 --no-banner
-          --exit-code 0 --timeout 300 --report-format json
-          --report-path reports/gitleaks.json || true
+          --exit-code 1 --report-format json
+          --report-path reports/gitleaks.json
       - name: Upload secret audit report
         if: always()
         uses: actions/upload-artifact@v4
@@ -213,8 +223,8 @@ jobs:
       - name: Audit runtime dependencies
         run: |
           mkdir -p reports
-          python -m pip_audit --requirement requirements-runtime.txt \
-            --progress-spinner off --format json --output reports/pip-audit.json || true
+          python -m pip_audit --requirement requirements-runtime.txt --strict \
+            --progress-spinner off --format json --output reports/pip-audit.json
       - name: Upload python dependency report
         if: always()
         uses: actions/upload-artifact@v4
@@ -224,9 +234,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  quality-gate:
+    name: Quality gate
+    if: always()
+    needs: [backend-tests, frontend-build, code-audit, secrets-audit, python-audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every audit and test to pass
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          jobs = json.loads(os.environ["JOB_RESULTS"])
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Audit and test results\n\n| Check | Result |\n| --- | --- |\n")
+              for name, job in jobs.items():
+                  summary.write(f"| {name} | {job['result']} |\n")
+          failed = [name for name, job in jobs.items() if job["result"] != "success"]
+          if failed:
+              print("Release blocked: " + ", ".join(failed), file=sys.stderr)
+              sys.exit(1)
+          PY
+
   publish-docker:
     name: Build & publish Docker image (Optional / For Docker Users)
-    needs: [backend-tests, frontend-build]
+    needs: quality-gate
     if: |
       (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
       (github.event_name == 'workflow_dispatch' && (inputs.publish_docker == true || inputs.publish_docker == 'true'))
@@ -235,7 +272,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

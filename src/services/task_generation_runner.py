@@ -10,13 +10,15 @@ from src.prompt_utils import generate_criteria
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_service import TaskService
+from src.infrastructure.paths import safe_child_path
 
 def build_criteria_filename(keyword: str) -> str:
     safe_keyword = "".join(
         char for char in keyword.lower().replace(" ", "_")
         if char.isalnum() or char in "_-"
     ).rstrip()
-    return f"prompts/{safe_keyword}_criteria.txt"
+    filename = f"{safe_keyword}_criteria.txt"
+    return f"prompts/{filename}"
 
 
 def build_task_create(req: TaskGenerateRequest, criteria_file: str) -> TaskCreate:
@@ -48,7 +50,8 @@ async def save_generated_criteria(output_filename: str, generated_criteria: str)
         raise RuntimeError("AI 未能生成分析标准，返回内容为空。")
 
     os.makedirs("prompts", exist_ok=True)
-    async with aiofiles.open(output_filename, "w", encoding="utf-8") as file:
+    safe_path = safe_child_path("prompts", os.path.basename(output_filename))
+    async with aiofiles.open(safe_path, "w", encoding="utf-8") as file:
         await file.write(generated_criteria)
 
 
@@ -113,6 +116,11 @@ async def run_ai_generation_job(
         await reload_scheduler(task_service, scheduler_service)
         await generation_service.complete(job_id, task, f"任务“{req.task_name}”创建完成。")
     except Exception as exc:
-        if os.path.exists(output_filename):
-            os.remove(output_filename)
+        try:
+            safe_path = safe_child_path("prompts", os.path.basename(output_filename))
+            if os.path.exists(safe_path):
+                os.remove(safe_path)
+        except (OSError, ValueError):
+            # A rejected path must never prevent the job from reaching failed.
+            pass
         await generation_service.fail(job_id, f"AI 任务生成失败: {exc}")

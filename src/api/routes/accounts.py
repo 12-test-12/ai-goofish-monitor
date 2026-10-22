@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List
 from src.infrastructure.config.env_manager import env_manager
+from src.infrastructure.paths import safe_child_path
 
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -44,14 +45,16 @@ def _ensure_state_dir(path: str) -> None:
 
 def _validate_name(name: str) -> str:
     trimmed = name.strip()
-    if not trimmed or not ACCOUNT_NAME_RE.match(trimmed):
+    if not trimmed or not ACCOUNT_NAME_RE.fullmatch(trimmed):
         raise HTTPException(status_code=400, detail="账号名称只能包含字母、数字、下划线或短横线。")
     return trimmed
 
 
 def _account_path(name: str) -> str:
-    filename = f"{name}.json"
-    return os.path.join(_state_dir(), filename)
+    try:
+        return safe_child_path(_state_dir(), f"{_validate_name(name)}.json")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的账号文件路径")
 
 
 def _validate_json(content: str) -> None:

@@ -17,3 +17,4 @@ price_history/
 data/
 audit/
 tests/audit/
+.venv-ci*/

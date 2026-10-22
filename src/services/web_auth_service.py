@@ -24,10 +24,14 @@ class WebAuthService:
         self.settings_provider = settings_provider
         self.clock = clock
         self._sessions: dict[str, WebSession] = {}
+        self._credential_salt = secrets.token_bytes(16)
 
     def _credential_version(self) -> bytes:
         settings = self.settings_provider()
-        return hashlib.sha256(f"{settings.web_username}\0{settings.web_password}".encode()).digest()
+        return hashlib.scrypt(
+            f"{settings.web_username}\0{settings.web_password}".encode(),
+            salt=self._credential_salt, n=16384, r=8, p=1,
+        )
 
     def login(self, username: str, password: str) -> str | None:
         settings = self.settings_provider()

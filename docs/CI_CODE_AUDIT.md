@@ -1,12 +1,12 @@
 # CI 代码审计与镜像发布
 
-入口：`.github/workflows/docker-image.yml`，Actions 名称为 **CI, code audit and Docker release**。
+入口：`.github/workflows/docker-image.yml`，Actions 名称为 **CI & Docker Build**。
 
 ## 触发与发布
 
-- 向 `master` 提交 PR：审计、测试和前端构建，不登录镜像仓库、不发布镜像。
-- 推送或合并到 `master`：重新检查实际提交，全部通过后发布 amd64/arm64 镜像。
-- 手动运行：始终执行检查，只有选中 `master` 才允许发布。
+- 向 `master` / `main` 提交 PR：审计、测试和前端构建，并保存 `frontend-dist` 供非 Docker 用户下载。
+- 推送到 `master` / `main` 或 `v*` 标签：重新检查实际提交，全部通过后发布 amd64/arm64 镜像。
+- 手动运行：始终执行检查，通过 `publish_docker` 选择是否发布镜像。
 - 不设置路径过滤，避免只改工作流或依赖时漏掉检查。同一 PR 的新运行取消旧运行；同一分支的发布运行串行执行。
 
 ```mermaid
@@ -21,8 +21,7 @@ flowchart TD
     D --> G
     E --> G
     F --> G
-    G -->|全部成功且为 master 发布事件| H[构建并推送基础镜像]
-    H --> I[按基础镜像 digest 构建并推送应用镜像]
+    G -->|全部成功且需要发布| H[构建并推送应用镜像]
 ```
 
 ## 审计内容与阻断规则
@@ -32,13 +31,21 @@ flowchart TD
 | CodeQL `security-extended` | Python、JavaScript/TypeScript、GitHub Actions | 安全评分 ≥ 7.0；无评分但级别为 error；报告缺失、损坏或扫描执行失败 |
 | Gitleaks | 获取的全部 Git 历史 | 检出密钥，或扫描/下载/校验失败 |
 | pip-audit | `requirements-runtime.txt` 及解析出的间接依赖 | 任意已知漏洞，或依赖解析/漏洞查询失败 |
-| npm audit | `web-ui/package-lock.json`，包含开发与构建依赖 | high/critical 漏洞，或审计请求失败 |
+| npm audit | `web-ui/package-lock.json`，包含开发与构建依赖 | high/critical 漏洞（下述精确例外除外），或审计请求失败 |
 | pytest | 除 `tests/audit` 外的测试，排除 live/live_slow | 任意用例失败或测试无法执行 |
 | Vue 构建 | 锁定依赖安装、TypeScript 检查、Vite 构建 | 任一步失败 |
 
 CodeQL 完成分析和上传告警本身不代表没有高危问题，因此额外执行 `scripts/ci/check_codeql.py` 读取 SARIF 并返回失败状态。关卡不使用漏洞基线自动放行，也不通过 `continue-on-error` 隐藏扫描失败。
 
-`Quality gate` 要求所有上游 job 都返回 success；failure、cancelled、skipped 均不允许发布。两个镜像发布 job 依赖此关卡。应用镜像通过基础镜像的 `sha256` digest 引用同次运行的构建结果，避免使用浮动 latest 产生串用。
+`Quality gate` 要求所有上游 job 都返回 success；failure、cancelled、skipped 均不允许发布。`publish-docker` 依赖此关卡，Docker 构建或发布失败也会如实显示失败。
+
+### 前端依赖例外（2026-10-22 审查）
+
+更新锁文件至修补版本后，Tailwind CSS 3 的间接构建依赖 `braces` 仍受 [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) 影响，上游尚无修复版本。漏洞由恶意嵌套 glob 模式触发；本项目构建仅使用仓库维护的 Tailwind 内容路径，不接受用户提交 glob，生产静态资源不运行 braces。
+
+`scripts/ci/check_npm_audit.py` 只在该漏洞编号、包名和 high 等级均匹配，且锁文件中每个受影响节点都为 `dev: true` 时放行，复审截止 **2026-11-22**。过期、进入运行时依赖、其他漏洞或 critical 等级均阻断。保留完整 npm JSON 报告；网络错误、缺失或无效报告不能通过。修复版本发布后应更新锁文件并删除例外。
+
+Gitleaks 8.24.2 不支持 `--timeout`；超时通过扫描 step 的 `timeout-minutes: 5` 控制，扫描使用 `--exit-code 1`。不以 `|| true` 掩盖扫描失败。
 
 ## 查看报告
 
@@ -50,7 +57,7 @@ CodeQL 完成分析和上传告警本身不代表没有高危问题，因此额�
 
 ## 权限与仓库设置
 
-工作流默认仅 `contents: read`，checkout 不保存凭据。CodeQL job 单独使用 `security-events: write` 上传告警；只有两个发布 job 具有 `packages: write`。审计无需额外 AI API Key 或第三方审计服务密钥。Action 使用已核对的完整提交 SHA，Gitleaks 下载固定版本并校验发布方 checksum。
+工作流默认仅 `contents: read`，checkout 不保存凭据。CodeQL job 单独使用 `security-events: write` 上传告警；只有发布 job 具有 `packages: write`。审计无需额外 AI API Key 或第三方审计服务密钥。CodeQL Action 固定为已使用过的 v4.39.1 完整提交 SHA，Gitleaks 下载固定版本并校验发布方 checksum。
 
 当前仓库为公开仓库，可使用 CodeQL。如果迁移到私有仓库，需要确认 GitHub Code Security 授权。仓库已有 CodeQL Default setup 时，应先关闭 Default setup，再使用这份 Advanced setup 工作流，避免结果上传冲突。
 
@@ -69,6 +76,8 @@ npm audit --package-lock-only --audit-level=high
 npm ci --no-audit --no-fund
 npm run build
 ```
+
+需要应用上述精确例外时，先将 `npm audit --package-lock-only --json` 输出保存为 `reports/npm-audit.json`，再从仓库根目录执行 `python scripts/ci/check_npm_audit.py reports/npm-audit.json web-ui/package-lock.json`。原始 `npm audit` 会继续报告已知的 braces 漏洞。
 
 下载 CodeQL SARIF 后，可在仓库根目录运行：
 

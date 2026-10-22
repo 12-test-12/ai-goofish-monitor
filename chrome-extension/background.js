@@ -30,7 +30,9 @@ async function getActiveGoofishTab() {
   if (!tab || !tab.id || !tab.url) {
     throw new Error("未找到活动标签页");
   }
-  if (!tab.url.includes("goofish.com")) {
+  const url = new URL(tab.url);
+  if (!["http:", "https:"].includes(url.protocol) ||
+      !(url.hostname === "goofish.com" || url.hostname.endsWith(".goofish.com"))) {
     throw new Error("请先打开 goofish.com 页面");
   }
   return tab;

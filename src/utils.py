@@ -13,6 +13,7 @@ from openai import APIStatusError
 from requests.exceptions import HTTPError
 
 from src.services.result_storage_service import save_result_record
+from src.infrastructure.paths import safe_child_path
 
 
 def retry_on_failure(retries=3, delay=5):
@@ -86,8 +87,8 @@ def sanitize_filename(value: str) -> str:
 def build_task_log_path(task_id: int, task_name: str) -> str:
     """生成任务日志路径（包含任务名）。"""
     safe_name = sanitize_filename(task_name)
-    filename = f"{safe_name}_{task_id}.log"
-    return os.path.join("logs", filename)
+    filename = f"{safe_name}_{int(task_id)}.log"
+    return safe_child_path("logs", filename)
 
 
 def resolve_task_log_path(task_id: int, task_name: str) -> str:
@@ -95,10 +96,10 @@ def resolve_task_log_path(task_id: int, task_name: str) -> str:
     primary_path = build_task_log_path(task_id, task_name)
     if os.path.exists(primary_path):
         return primary_path
-    pattern = os.path.join("logs", f"*_{task_id}.log")
+    pattern = os.path.join("logs", f"*_{int(task_id)}.log")
     matches = glob.glob(pattern)
     if matches:
-        return matches[0]
+        return safe_child_path("logs", os.path.basename(matches[0]))
     return primary_path
 
 

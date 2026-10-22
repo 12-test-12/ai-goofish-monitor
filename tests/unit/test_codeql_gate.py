@@ -112,3 +112,9 @@ def test_codeql_gate_soft_fail(tmp_path):
     assert main([str(tmp_path)]) == 1
     # With --soft-fail, it reports finding but exits 0
     assert main([str(tmp_path), "--soft-fail"]) == 0
+
+
+def test_codeql_soft_fail_does_not_hide_missing_or_failed_scan(tmp_path):
+    assert main([str(tmp_path), "--soft-fail"]) == 2
+    write_report(tmp_path, invocation={"executionSuccessful": False})
+    assert main([str(tmp_path), "--soft-fail"]) == 2

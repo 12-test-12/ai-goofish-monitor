@@ -6,6 +6,7 @@ import aiofiles
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from src.infrastructure.paths import safe_child_path
 
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
@@ -16,8 +17,7 @@ _PROMPTS_DIR = Path("prompts").resolve()
 def _safe_prompt_path(filename: str) -> Path:
     """返回经过 containment 检查的绝对路径，防止任意 OS 上的路径穿越。"""
     try:
-        resolved = (_PROMPTS_DIR / filename).resolve()
-        resolved.relative_to(_PROMPTS_DIR)
+        resolved = Path(safe_child_path(_PROMPTS_DIR, filename))
     except (ValueError, OSError):
         raise HTTPException(status_code=400, detail="无效的文件名")
     return resolved

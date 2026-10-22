@@ -7,7 +7,7 @@ import tempfile
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from playwright.async_api import (
     Response,
@@ -97,8 +97,16 @@ async def _managed_scrape_browser(playwright, launch_kwargs):
 def _is_login_url(url: str) -> bool:
     if not url:
         return False
-    lowered = url.lower()
-    return "passport.goofish.com" in lowered or "mini_login" in lowered
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        return parsed.hostname == "passport.goofish.com" or (
+            parsed.hostname in {"goofish.com", "www.goofish.com"}
+            and "mini_login" in parsed.path.lower()
+        )
+    except ValueError:
+        return False
 
 
 def _resolve_browser_channel() -> str:
@@ -1240,7 +1248,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 if type(e).__name__ == "TargetClosedError":
                     log_time("浏览器已关闭，忽略后续异常（可能是任务被停止）。")
                     return processed_item_count
-                if "passport.goofish.com" in str(e):
+                if _is_login_url(page.url):
                     raise LoginRequiredError(
                         f"Login required: redirected to passport flow ({e})"
                     ) from e

@@ -80,7 +80,7 @@ def main(argv=None) -> int:
         total, blocked = check_reports(args.directory, args.min_score)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         print(f"CodeQL gate failed: {exc}", file=sys.stderr)
-        return 0 if args.soft_fail else 2
+        return 2
 
     message = f"CodeQL: {total} findings, {blocked} blocking (threshold {args.min_score:g})."
     print(message)
