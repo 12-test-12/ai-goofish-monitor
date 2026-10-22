@@ -131,3 +131,28 @@ def test_cli_selects_id_and_refuses_ambiguous_names(tmp_path, monkeypatch, selec
         assert len(called) == 1
         assert called[0]["id"] == 9
         assert called[0]["keyword"] == "phone"
+
+
+@pytest.mark.parametrize("ids", [[1, 1], [1, None], [True, 2], ["1", 2], [-1, 2]])
+def test_cli_rejects_conflicting_or_invalid_ids_before_running(tmp_path, monkeypatch, ids):
+    fake_scraper = types.ModuleType("src.scraper")
+    called = []
+
+    async def fake_scrape(task_config, debug_limit=0):
+        called.append(task_config)
+        return 0
+
+    fake_scraper.scrape_xianyu = fake_scrape
+    monkeypatch.setitem(sys.modules, "src.scraper", fake_scraper)
+    sys.modules.pop("spider_v2", None)
+    spider = importlib.import_module("spider_v2")
+    config = tmp_path / "tasks.json"
+    config.write_text(json.dumps([
+        {"id": task_id, "task_name": f"task-{index}", "enabled": True, "decision_mode": "keyword"}
+        for index, task_id in enumerate(ids)
+    ]), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["spider_v2.py", "--config", str(config)])
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(spider.main())
+    assert exc.value.code == 2
+    assert not called

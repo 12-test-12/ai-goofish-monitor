@@ -46,12 +46,19 @@ async def main():
     else:
         repository = SqliteTaskRepository()
         tasks = await repository.find_all()
-        tasks_config = [task.dict() for task in tasks]
+        tasks_config = [task.model_dump() for task in tasks]
 
     # Legacy JSON configurations used list positions as task IDs during migration.
+    if not isinstance(tasks_config, list) or any(not isinstance(task, dict) for task in tasks_config):
+        parser.error("任务配置必须是任务对象列表")
+    task_ids = set()
     for index, task in enumerate(tasks_config):
         if task.get("id") is None:
             task["id"] = index
+        task_id = task["id"]
+        if type(task_id) is not int or task_id < 0 or task_id in task_ids:
+            parser.error(f"任务 ID 必须是唯一的非负整数: {task_id}")
+        task_ids.add(task_id)
 
     def normalize_keywords(value):
         if value is None:

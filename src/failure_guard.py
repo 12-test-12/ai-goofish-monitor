@@ -102,7 +102,7 @@ def _read_json_file(path: str) -> dict:
         return data if isinstance(data, dict) else {}
     except FileNotFoundError:
         return {}
-    except Exception:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         # 文件损坏时保留现场，避免无限解析失败。
         try:
             ts = str(int(time.time()))
@@ -174,15 +174,13 @@ class FailureGuard:
         if task_id is None:
             return task_name
         key = f"task-id:{task_id}"
-        snapshot = self._load().get("tasks", {})
-        # Preserve pre-upgrade pauses without coupling future failures of namesakes.
-        if key not in snapshot and task_name in snapshot:
-            with FileLock(f"{self.path}.lock"):
-                data = self._load()
-                tasks = data.setdefault("tasks", {})
-                if key not in tasks and isinstance(tasks.get(task_name), dict):
-                    tasks[key] = dict(tasks[task_name])
-                    self._save(data)
+        # Reading may quarantine corrupt data, so readers use the writer lock too.
+        with FileLock(f"{self.path}.lock"):
+            data = self._load()
+            tasks = data.setdefault("tasks", {})
+            if key not in tasks and isinstance(tasks.get(task_name), dict):
+                tasks[key] = dict(tasks[task_name])
+                self._save(data)
         return key
 
     def _update_task(self, task_key: str, updater) -> dict:
@@ -199,20 +197,21 @@ class FailureGuard:
             return entry
 
     def record_success(self, task_key: str, *, now: Optional[datetime] = None) -> None:
-        def _reset(_: dict) -> dict:
-            current = _now(self.tz_name, now=now)
-            return {
-                "consecutive_failures": 0,
-                "paused_until": None,
-                "last_notified_date": None,
-                "last_failure_reason": None,
-                "last_failure_at": None,
-                "last_success_at": _dt_to_str(current),
-                "cookie_path": None,
-                "cookie_mtime": None,
-            }
+        current = _now(self.tz_name, now=now)
+        self._update_task(task_key, lambda _: self._success_entry(current))
 
-        self._update_task(task_key, _reset)
+    @staticmethod
+    def _success_entry(current: datetime) -> dict:
+        return {
+            "consecutive_failures": 0,
+            "paused_until": None,
+            "last_notified_date": None,
+            "last_failure_reason": None,
+            "last_failure_at": None,
+            "last_success_at": _dt_to_str(current),
+            "cookie_path": None,
+            "cookie_mtime": None,
+        }
 
     def should_skip_start(
         self,
@@ -220,6 +219,13 @@ class FailureGuard:
         *,
         cookie_path: Optional[str] = None,
         now: Optional[datetime] = None,
+    ) -> SkipDecision:
+        # Keep the read, cookie recovery and daily notification claim atomic.
+        with FileLock(f"{self.path}.lock"):
+            return self._should_skip_start_locked(task_key, cookie_path=cookie_path, now=now)
+
+    def _should_skip_start_locked(
+        self, task_key: str, *, cookie_path: Optional[str], now: Optional[datetime]
     ) -> SkipDecision:
         current = _now(self.tz_name, now=now)
         today = _today_str(self.tz_name, now=current)
@@ -248,7 +254,8 @@ class FailureGuard:
             and _cookie_changed(cookie_path, previous_cookie_mtime)
         ):
             # cookies / 登录态更新 => 自动恢复
-            self.record_success(task_key, now=current)
+            data["tasks"][task_key] = self._success_entry(current)
+            self._save(data)
             return SkipDecision(
                 skip=False,
                 should_notify=False,
@@ -261,13 +268,8 @@ class FailureGuard:
             should_notify = last_notified_date != today
 
             if should_notify:
-
-                def _touch(e: dict) -> dict:
-                    e = dict(e or {})
-                    e["last_notified_date"] = today
-                    return e
-
-                self._update_task(task_key, _touch)
+                entry["last_notified_date"] = today
+                self._save(data)
 
             return SkipDecision(
                 skip=True,

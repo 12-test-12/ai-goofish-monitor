@@ -127,6 +127,7 @@ class SqliteTaskRepository(TaskRepository):
                 """,
                 payload,
             )
+            self._remember_task_id(conn, task_id)
             conn.commit()
         return task.model_copy(update={"id": task_id})
 
@@ -160,8 +161,20 @@ class SqliteTaskRepository(TaskRepository):
         )
         with sqlite_connection(self.db_path) as conn:
             cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            if cursor.rowcount:
+                # Older databases may not have allocated an ID since upgrading.
+                # Preserve deleted IDs before they disappear from MAX(id).
+                self._remember_task_id(conn, task_id)
             conn.commit()
         return cursor.rowcount > 0
+
+    def _remember_task_id(self, conn, task_id: int) -> None:
+        conn.execute("""
+            INSERT INTO app_metadata(key, value) VALUES ('tasks:last_id', CAST(? AS TEXT))
+            ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(
+                CAST(app_metadata.value AS INTEGER), CAST(excluded.value AS INTEGER)
+            ) AS TEXT)
+        """, (task_id,))
 
     def _next_task_id(self, conn) -> int:
         # A transactional high-water mark preserves existing zero-based IDs and

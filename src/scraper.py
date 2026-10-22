@@ -75,6 +75,14 @@ class LoginRequiredError(Exception):
     """Raised when Goofish redirects to the passport/mini_login flow."""
 
 
+def _raise_for_api_failure(payload: dict) -> None:
+    result = str(payload.get("ret") or "")
+    if "FAIL_SYS_USER_VALIDATE" in result:
+        raise RiskControlError("FAIL_SYS_USER_VALIDATE")
+    if "FAIL_SYS_SESSION_EXPIRED" in result:
+        raise LoginRequiredError("FAIL_SYS_SESSION_EXPIRED")
+
+
 FAILURE_GUARD = FailureGuard()
 EDGE_DOCKER_WARNING_PRINTED = False
 
@@ -190,6 +198,8 @@ async def _notify_task_failure(
             "FAIL_SYS_USER_VALIDATE",
             "baxia-dialog",
             "J_MIDDLEWARE_FRAME_WIDGET",
+            "RiskControlError:",
+            "LoginRequiredError:",
         )
     )
 
@@ -752,6 +762,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
                 # 捕获初始搜索的API数据
                 initial_response = await initial_response_info.value
+                _raise_for_api_failure(await initial_response.json())
 
                 # 等待页面加载出关键筛选元素，以确认已成功进入搜索结果页
                 try:
@@ -1021,9 +1032,9 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         log_time(f"第 {page_num} 页响应无效，跳过。")
                         continue
 
-                    basic_items = await _parse_search_results_json(
-                        await current_response.json(), f"第 {page_num} 页"
-                    )
+                    search_json = await current_response.json()
+                    _raise_for_api_failure(search_json)
+                    basic_items = await _parse_search_results_json(search_json, f"第 {page_num} 页")
                     if not basic_items:
                         break
                     historical_snapshots.extend(
@@ -1069,25 +1080,13 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                     wait_until="domcontentloaded",
                                     timeout=25000,
                                 )
+                                if _is_login_url(getattr(detail_page, "url", "")):
+                                    raise LoginRequiredError("详情页跳转到登录页面")
 
                             detail_response = await detail_info.value
                             if detail_response.ok:
                                 detail_json = await detail_response.json()
-
-                                ret_string = str(
-                                    await safe_get(detail_json, "ret", default=[])
-                                )
-                                if "FAIL_SYS_USER_VALIDATE" in ret_string:
-                                    print(
-                                        "\n==================== CRITICAL BLOCK DETECTED ===================="
-                                    )
-                                    print(
-                                        "检测到闲鱼反爬虫验证 (FAIL_SYS_USER_VALIDATE)，程序将终止。"
-                                    )
-                                    print(
-                                        "==================================================================="
-                                    )
-                                    raise RiskControlError("FAIL_SYS_USER_VALIDATE")
+                                _raise_for_api_failure(detail_json)
 
                                 # 解析商品详情数据并更新 item_data
                                 item_do = await safe_get(
@@ -1210,8 +1209,14 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                             stop_scraping = True
                             raise
                         except PlaywrightTimeoutError:
+                            if _is_login_url(getattr(detail_page, "url", "")):
+                                stop_scraping = True
+                                raise LoginRequiredError("详情页跳转到登录页面")
                             print(f"   错误: 访问商品详情页或等待API响应超时。")
                         except Exception as e:
+                            if _is_login_url(getattr(detail_page, "url", "")):
+                                stop_scraping = True
+                                raise LoginRequiredError("详情页跳转到登录页面") from e
                             print(f"   错误: 处理商品详情时发生未知错误: {e}")
                         finally:
                             try:
@@ -1353,11 +1358,11 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             FAILURE_GUARD.record_success(FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard))
             break
         except LoginRequiredError as e:
-            last_error = str(e)
+            last_error = f"LoginRequiredError: {e}"
             print(f"检测到登录失效/重定向: {e}")
             break
         except RiskControlError as e:
-            last_error = str(e)
+            last_error = f"RiskControlError: {e}"
             print(f"检测到风控或验证触发: {e}")
             # 风控验证通常不是简单轮换能解决的，避免无意义重试。
             break

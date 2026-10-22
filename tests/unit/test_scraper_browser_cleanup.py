@@ -86,3 +86,50 @@ def test_browser_close_error_preserves_original_failure(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError, match="original failure"):
         asyncio.run(scenario())
+
+
+def test_launch_failure_releases_browser_capacity(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_DATABASE_FILE", str(tmp_path / "app.sqlite3"))
+    monkeypatch.setenv("MAX_BROWSER_CONCURRENCY", "1")
+    browser = SimpleNamespace(close=AsyncMock())
+    launch = AsyncMock(side_effect=[RuntimeError("launch failed"), browser])
+    playwright = SimpleNamespace(chromium=SimpleNamespace(launch=launch))
+
+    async def scenario():
+        with pytest.raises(RuntimeError, match="launch failed"):
+            async with scraper._managed_scrape_browser(playwright, {}):
+                pytest.fail("failed launch must not yield a browser")
+        async with scraper._managed_scrape_browser(playwright, {}):
+            pass
+
+    asyncio.run(_with_timeout(scenario()))
+    browser.close.assert_awaited_once()
+
+
+async def _with_timeout(coroutine):
+    return await asyncio.wait_for(coroutine, timeout=2)
+
+
+def test_cancelled_slot_waiter_never_launches_browser(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_DATABASE_FILE", str(tmp_path / "app.sqlite3"))
+    monkeypatch.setenv("MAX_BROWSER_CONCURRENCY", "1")
+    launch = AsyncMock()
+    playwright = SimpleNamespace(chromium=SimpleNamespace(launch=launch))
+
+    async def wait_for_browser():
+        async with scraper._managed_scrape_browser(playwright, {}):
+            pytest.fail("waiting task must not launch a browser")
+
+    async def scenario():
+        async with scraper.browser_slot():
+            waiter = asyncio.create_task(wait_for_browser())
+            await asyncio.sleep(0.02)
+            assert not waiter.done()
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+        async with scraper.browser_slot():
+            pass
+
+    asyncio.run(_with_timeout(scenario()))
+    launch.assert_not_awaited()

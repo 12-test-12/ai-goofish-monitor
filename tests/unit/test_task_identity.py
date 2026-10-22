@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.domain.models.task import Task, TaskUpdate
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
+from src.infrastructure.persistence.sqlite_connection import sqlite_connection
 from src.services.task_service import TaskService
 
 
@@ -61,3 +62,22 @@ def test_status_races_do_not_overwrite_account_edits_or_resurrect_deleted_tasks(
         assert await repository.find_by_id(task.id) is None
 
     asyncio.run(scenario())
+
+
+def test_deleted_legacy_ids_are_not_reused_before_first_allocation(sample_task_payload, tmp_path):
+    repository = SqliteTaskRepository(str(tmp_path / "tasks.sqlite3"), legacy_config_file=None)
+    repository._save_sync(Task(**sample_task_payload, id=41))
+    # Reproduce an upgraded database that has never allocated a new task ID.
+    with sqlite_connection(repository.db_path) as conn:
+        conn.execute("DELETE FROM app_metadata WHERE key = 'tasks:last_id'")
+        conn.commit()
+    assert repository._delete_sync(41)
+    assert repository._save_sync(Task(**sample_task_payload)).id == 42
+
+
+def test_saving_explicit_ids_preserves_high_water_mark(sample_task_payload, tmp_path):
+    repository = SqliteTaskRepository(str(tmp_path / "tasks.sqlite3"), legacy_config_file=None)
+    repository._save_sync(Task(**sample_task_payload, id=99))
+    repository._save_sync(Task(**sample_task_payload, id=2))
+    with sqlite_connection(repository.db_path) as conn:
+        assert conn.execute("SELECT value FROM app_metadata WHERE key = 'tasks:last_id'").fetchone()[0] == "99"
