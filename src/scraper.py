@@ -4,6 +4,7 @@ import os
 import random
 import re
 import tempfile
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlencode
@@ -75,6 +76,20 @@ class LoginRequiredError(Exception):
 
 FAILURE_GUARD = FailureGuard()
 EDGE_DOCKER_WARNING_PRINTED = False
+
+
+@asynccontextmanager
+async def _managed_scrape_browser(playwright, launch_kwargs):
+    """从浏览器启动成功起保护资源，覆盖上下文初始化和分析收尾异常。"""
+    browser = await playwright.chromium.launch(**launch_kwargs)
+    try:
+        yield browser
+    finally:
+        try:
+            log_time("任务执行完毕，正在关闭浏览器释放内存资源...")
+            await browser.close()
+        except Exception as close_err:
+            log_time(f"关闭浏览器时出现非致命异常: {close_err}")
 
 
 def _is_login_url(url: str) -> bool:
@@ -610,7 +625,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         except Exception as e:
             print(f"警告：读取登录状态文件失败，将直接按路径使用: {e}")
 
-        async with async_playwright() as p:
+        async with async_playwright() as p, AsyncExitStack() as browser_stack:
             launch_args = prepare_chromium_launch_args()
 
             launch_kwargs = {"headless": RUN_HEADLESS, "args": launch_args}
@@ -619,7 +634,9 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
             launch_kwargs["channel"] = _resolve_browser_channel()
 
-            browser = await p.chromium.launch(**launch_kwargs)
+            browser = await browser_stack.enter_async_context(
+                _managed_scrape_browser(p, launch_kwargs)
+            )
 
             context_kwargs = _default_context_options()
             storage_state_arg = state_file
@@ -1221,12 +1238,6 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 if analysis_dispatcher is not None:
                     log_time("等待后台分析任务完成...")
                     await analysis_dispatcher.join()
-                if browser is not None:
-                    try:
-                        log_time("任务执行完毕，正在关闭浏览器释放内存资源...")
-                        await browser.close()
-                    except Exception as close_err:
-                        log_time(f"关闭浏览器时出现非致命异常: {close_err}")
 
         return processed_item_count
 

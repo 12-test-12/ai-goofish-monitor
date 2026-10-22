@@ -1,6 +1,9 @@
 import asyncio
+import io
 import sys
 from types import SimpleNamespace
+
+import pytest
 
 from src.services.process_service import ProcessService
 
@@ -117,6 +120,8 @@ def test_process_service_windows_terminate_invokes_taskkill(monkeypatch):
 
     async def fake_taskkill(pid: int):
         taskkill_calls.append(pid)
+        fake_proc.finish(0)
+        return True
 
     monkeypatch.setattr(service, "_kill_process_tree_windows", fake_taskkill)
     monkeypatch.setattr(sys, "platform", "win32")
@@ -124,8 +129,6 @@ def test_process_service_windows_terminate_invokes_taskkill(monkeypatch):
     fake_proc = FakeProcess(pid=9999)
 
     async def run():
-        # Set finished immediately on wait to simulate normal termination flow
-        fake_proc.finish(0)
         await service._terminate_process(fake_proc, 1)
 
     asyncio.run(run())
@@ -137,6 +140,8 @@ def test_process_service_kill_process_tree_executes_taskkill_command(monkeypatch
     exec_args = []
 
     class DummyProc:
+        returncode = 0
+
         async def wait(self):
             return 0
 
@@ -146,6 +151,137 @@ def test_process_service_kill_process_tree_executes_taskkill_command(monkeypatch
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    asyncio.run(service._kill_process_tree_windows(8888))
+    assert asyncio.run(service._kill_process_tree_windows(8888)) is True
     assert len(exec_args) == 1
     assert exec_args[0] == ("taskkill", "/F", "/T", "/PID", "8888")
+
+
+@pytest.fixture()
+def startable_service(monkeypatch):
+    service = ProcessService()
+    monkeypatch.setattr(service.failure_guard, "should_skip_start", lambda *a, **kw: SimpleNamespace(skip=False))
+    monkeypatch.setattr(service, "_resolve_cookie_path", lambda _: None)
+    monkeypatch.setattr(service, "_open_log_file", lambda *a: ("", io.StringIO()))
+    return service
+
+
+def test_concurrent_starts_spawn_only_once(monkeypatch, startable_service):
+    async def scenario():
+        service = startable_service
+        spawn_entered = asyncio.Event()
+        release_spawn = asyncio.Event()
+        process = FakeProcess(1234)
+        calls = []
+
+        async def spawn(*args):
+            calls.append(args)
+            spawn_entered.set()
+            await release_spawn.wait()
+            return process
+
+        monkeypatch.setattr(service, "_spawn_process", spawn)
+        first = asyncio.create_task(service.start_task(1, "task-a"))
+        await spawn_entered.wait()
+        assert await service.start_task(1, "task-a") is False
+        release_spawn.set()
+        assert await first is True
+        assert len(calls) == 1
+        process.finish()
+        await service._await_exit_watcher(1)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("spawn_fails", [False, True])
+def test_cancelled_start_releases_resources_and_allows_retry(monkeypatch, startable_service, spawn_fails):
+    async def scenario():
+        service = startable_service
+        spawn_entered = asyncio.Event()
+        release_spawn = asyncio.Event()
+        process = FakeProcess(1234)
+        log_handle = io.StringIO()
+        monkeypatch.setattr(service, "_open_log_file", lambda *a: ("", log_handle))
+
+        async def spawn(*args):
+            spawn_entered.set()
+            await release_spawn.wait()
+            if spawn_fails:
+                raise OSError("spawn failed")
+            return process
+
+        async def terminate(proc, task_id):
+            proc.finish(-9)
+
+        monkeypatch.setattr(service, "_spawn_process", spawn)
+        monkeypatch.setattr(service, "_terminate_process", terminate)
+        starting = asyncio.create_task(service.start_task(1, "task-a"))
+        await spawn_entered.wait()
+        starting.cancel()
+        release_spawn.set()
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+
+        assert not service._starting_task_ids
+        assert not service.processes
+        assert not service.exit_watchers
+        assert log_handle.closed
+        if not spawn_fails:
+            assert process.returncode == -9
+
+        async def retry_spawn(*args):
+            return FakeProcess(5678)
+
+        monkeypatch.setattr(service, "_open_log_file", lambda *a: ("", io.StringIO()))
+        monkeypatch.setattr(service, "_spawn_process", retry_spawn)
+        assert await service.start_task(1, "task-a") is True
+        service.processes[1].finish()
+        await service._await_exit_watcher(1)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["exit_code", "missing_command", "timeout", "helper_unresponsive"])
+def test_windows_taskkill_failure_falls_back_and_reaps_helper(monkeypatch, failure):
+    async def scenario():
+        service = ProcessService()
+        process = FakeProcess(1234)
+        taskkill = FakeProcess(4321)
+        if failure == "exit_code":
+            taskkill.finish(1)
+        if failure == "helper_unresponsive":
+            taskkill.kill = lambda: None
+
+        async def spawn(*args, **kwargs):
+            if failure == "missing_command":
+                raise FileNotFoundError("taskkill unavailable")
+            return taskkill
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+        monkeypatch.setattr("src.services.process_service.STOP_TIMEOUT_SECONDS", 0.01)
+        await service._terminate_process(process, 1)
+        assert process.returncode == -9
+        if failure == "timeout":
+            assert taskkill.returncode == -9
+
+    asyncio.run(scenario())
+
+
+def test_windows_final_wait_is_bounded(monkeypatch):
+    class UnresponsiveProcess(FakeProcess):
+        def kill(self):
+            pass
+
+    async def scenario():
+        service = ProcessService()
+
+        async def tree_kill(pid):
+            return True
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(service, "_kill_process_tree_windows", tree_kill)
+        monkeypatch.setattr("src.services.process_service.STOP_TIMEOUT_SECONDS", 0.01)
+        with pytest.raises(asyncio.TimeoutError):
+            await service._terminate_process(UnresponsiveProcess(1234), 1)
+
+    asyncio.run(scenario())
