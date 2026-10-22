@@ -278,6 +278,8 @@ def test_sanitize_no_proxy_noop_without_env(monkeypatch):
 
 
 def test_sanitize_no_proxy_handles_both_keys(monkeypatch):
+    # Model distinct POSIX environment keys even on Windows (case insensitive).
+    monkeypatch.setattr(os, "environ", {})
     monkeypatch.setenv("NO_PROXY", "::1/128")
     monkeypatch.setenv("no_proxy", "fe80::1/10")
     _sanitize_no_proxy_env()
@@ -286,6 +288,7 @@ def test_sanitize_no_proxy_handles_both_keys(monkeypatch):
 
 
 def test_sanitize_no_proxy_unwraps_bracketed_ipv6(monkeypatch):
+    monkeypatch.setattr(os, "environ", {})
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1,[::1]")
     monkeypatch.setenv("no_proxy", "[::1/128],10.0.0.0/8,[not-ipv6]")
     _sanitize_no_proxy_env()

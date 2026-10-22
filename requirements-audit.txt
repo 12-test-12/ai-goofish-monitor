@@ -1,0 +1,2 @@
+# Keep audit tooling separate from the application image.
+pip-audit==2.10.1
