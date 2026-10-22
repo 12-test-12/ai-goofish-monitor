@@ -8,13 +8,18 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
 
 
-def check(executable: Path, workspace: Path) -> None:
+def _command(executable, *args):
+    return ([sys.executable, str(executable)] if executable.suffix == ".py" else [str(executable)]) + list(args)
+
+
+def check(executable: Path, workspace: Path, *, native=False, report=None) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="smoke-", dir=workspace) as temporary:
         root = Path(temporary)
@@ -26,7 +31,7 @@ def check(executable: Path, workspace: Path) -> None:
                    WEB_USERNAME="desktop-smoke", WEB_PASSWORD="smoke-only", WEB_COOKIE_SECURE="false")
         worker_log = root / "worker.log"
         for attempt in range(2):
-            result = subprocess.run([str(executable), "--spider-worker", "--worker-log", str(worker_log), "--help"],
+            result = subprocess.run(_command(executable, "--spider-worker", "--worker-log", str(worker_log), "--help"),
                                     env=env, cwd=root, capture_output=True, timeout=60)
             if result.returncode:
                 raise RuntimeError(f"Worker failed ({result.returncode}): {result.stderr.decode('utf-8', errors='replace')}")
@@ -43,7 +48,7 @@ def check(executable: Path, workspace: Path) -> None:
             env["SERVER_PORT"] = str(listener.getsockname()[1])
         base = "http://127.0.0.1:" + env["SERVER_PORT"]
         with (root / "server.log").open("w", encoding="utf-8") as output:
-            process = subprocess.Popen([str(executable), "--no-browser"], env=env, cwd=root,
+            process = subprocess.Popen(_command(executable, "--no-browser"), env=env, cwd=root,
                                        stdout=output, stderr=output, start_new_session=os.name != "nt")
             try:
                 deadline = time.monotonic() + 60
@@ -84,6 +89,23 @@ def check(executable: Path, workspace: Path) -> None:
                 else:
                     os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=20)
+        if native:
+            report = (report or workspace / "desktop-gui.json").resolve()
+            result = subprocess.run(_command(executable, "--smoke-report", str(report)),
+                env=env, cwd=root, capture_output=True, timeout=90)
+            if result.returncode or not report.is_file():
+                log = data / "logs/desktop.log"
+                diagnostic = log.read_text(encoding="utf-8")[-7000:] if log.exists() else result.stderr.decode("utf-8", errors="replace")[-7000:]
+                raise RuntimeError("Native desktop failed: " + diagnostic)
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            assert payload["native_window"] and payload["tray_hide_restore"] and payload["icon_loaded"]
+            # Exiting through the tray must also stop the embedded server.
+            try:
+                urllib.request.urlopen(payload["url"] + "/health", timeout=1)
+            except (OSError, urllib.error.URLError):
+                pass
+            else:
+                raise AssertionError("Native desktop left its HTTP server running")
     print("Desktop smoke passed: worker dispatch, persistent data, packaged SPA/assets, health and API authentication")
 
 
@@ -91,5 +113,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable", type=Path)
     parser.add_argument("--workspace", type=Path, default=Path("audit/desktop/smoke"))
+    parser.add_argument("--native", action="store_true", help="Also launch the actual Windows window and exercise its tray")
+    parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    check(args.executable.resolve(), args.workspace.resolve())
+    check(args.executable.resolve(), args.workspace.resolve(), native=args.native, report=args.report)

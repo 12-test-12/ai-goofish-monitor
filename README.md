@@ -4,6 +4,8 @@
 
 基于 Playwright 和 AI 的闲鱼多任务实时监控，提供完整的 Web 管理界面。
 
+Windows 用户可使用[独立桌面版](docs/DESKTOP.md)：双击 EXE 打开软件窗口，关闭到托盘后继续监控。GitHub Actions 完成 Windows 构建后，可下载 `GoofishMonitor-Windows-x64` 产物。
+
 
 ## 核心特性
 

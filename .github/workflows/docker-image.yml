@@ -1,4 +1,4 @@
-name: CI & Docker Build
+name: CI, Desktop & Docker Build
 
 on:
   push:
@@ -119,6 +119,62 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  windows-desktop:
+    name: Windows desktop EXE
+    needs: [backend-tests, frontend-build]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RUN_LIVE_TESTS: '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install Windows desktop and test dependencies
+        run: python -m pip install -r requirements-desktop.txt pytest
+      - name: Download tested frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+      - name: Run Windows regressions
+        run: |
+          New-Item -ItemType Directory -Force reports | Out-Null
+          python -m pytest --ignore=tests/audit -m "not live and not live_slow" --junitxml=reports/windows-tests.xml
+      - name: Build windowed executable with application icon
+        run: python -m PyInstaller --noconfirm --distpath audit/desktop/dist --workpath audit/desktop/build desktop.spec
+      - name: Smoke test worker, HTTP server and native desktop
+        run: python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --report reports/desktop-gui.json
+      - name: Prepare portable download
+        run: |
+          Copy-Item docs/DESKTOP_PORTABLE.txt audit/desktop/dist/README.txt
+          Get-FileHash audit/desktop/dist/GoofishMonitor.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  GoofishMonitor.exe" } | Set-Content audit/desktop/dist/SHA256SUMS.txt
+      - name: Upload desktop package
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoofishMonitor-Windows-x64
+          path: audit/desktop/dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Windows test and GUI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-validation
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+
   code-audit:
     name: CodeQL analysis (${{ matrix.language }})
     runs-on: ubuntu-latest
@@ -237,7 +293,7 @@ jobs:
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [backend-tests, frontend-build, code-audit, secrets-audit, python-audit]
+    needs: [backend-tests, frontend-build, windows-desktop, code-audit, secrets-audit, python-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

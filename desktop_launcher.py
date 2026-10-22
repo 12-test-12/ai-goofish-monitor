@@ -1,6 +1,6 @@
 """
 桌面启动入口
-使用 PyInstaller 打包后作为单一可执行文件的入口，自动启动 FastAPI 服务并打开浏览器。
+使用 PyInstaller 打包后作为单一可执行文件的入口，默认打开独立桌面窗口。
 """
 import os
 import sys
@@ -98,8 +98,41 @@ def main(argv=None) -> None:
     else:
         parser = argparse.ArgumentParser(description="闲鱼监控桌面服务")
         parser.add_argument("--no-browser", action="store_true", help="只启动本地服务，不打开浏览器")
+        parser.add_argument("--browser", action="store_true", help="使用外部浏览器打开界面")
+        parser.add_argument("--smoke-report", type=Path, help=argparse.SUPPRESS)
         options = parser.parse_args(arguments)
-        run_app(open_browser=not options.no_browser)
+        if options.no_browser or options.browser:
+            run_app(open_browser=options.browser and not options.no_browser)
+        else:
+            _prepare_environment()
+            _configure_desktop_logging()
+            try:
+                from src.desktop.shell import run_desktop
+                run_desktop(BASE_DIR, smoke_report=options.smoke_report)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                if options.smoke_report:
+                    raise
+                _show_startup_error()
+                raise SystemExit(1)
+
+
+def _configure_desktop_logging():
+    """Windowed builds have no stdio; keep startup diagnostics in persistent data."""
+    if getattr(sys, "frozen", False):
+        Path("logs").mkdir(exist_ok=True)
+        output = open("logs/desktop.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = output
+
+
+def _show_startup_error():
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None,
+            "桌面程序启动失败。请检查 logs/desktop.log。\n"
+            "若缺少界面组件，请安装 Microsoft Edge WebView2 Runtime。\n"
+            "若程序已经运行，请从系统托盘打开。", "闲鱼智能监控", 0x10)
 
 
 if __name__ == "__main__":

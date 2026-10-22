@@ -1,0 +1,20 @@
+闲鱼智能监控 · Goofish Monitor（Windows x64）
+
+1. 双击 GoofishMonitor.exe 打开独立软件窗口。
+2. 关闭窗口会缩到系统托盘，后台监控继续运行。
+3. 单击托盘图标打开窗口；右键选择“退出并停止监控”彻底退出。
+4. 默认登录账号为 admin/admin123；如已修改，使用自己的账号密码。
+5. 账号、AI 和通知设置需在软件中配置，打包程序不包含个人账号或密钥。
+
+默认数据与日志：
+%LOCALAPPDATA%\GoofishMonitor
+%LOCALAPPDATA%\GoofishMonitor\logs\desktop.log
+
+若缺少桌面界面组件，请安装 Microsoft Edge WebView2 Evergreen Runtime：
+https://developer.microsoft.com/microsoft-edge/webview2/
+
+闲鱼抓取另需本机 Edge 或 Playwright 浏览器环境。当前为未签名的便携版，
+不包含自动更新或安装向导。升级前请从托盘退出旧版并保留数据目录。
+
+SHA256SUMS.txt 用于核对 EXE 完整性；PowerShell 可执行：
+Get-FileHash .\GoofishMonitor.exe -Algorithm SHA256

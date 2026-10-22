@@ -55,6 +55,7 @@ async function handleLogin() {
     </div>
     <Card class="app-surface relative z-10 w-full max-w-md border-none">
       <CardHeader>
+        <img src="/app-icon.png" alt="Goofish Monitor" width="80" height="80" class="mx-auto mb-3 h-20 w-20 object-contain" />
         <CardTitle class="text-2xl text-center">{{ t('login.title') }}</CardTitle>
         <CardDescription class="text-center">
           {{ t('login.description') }}

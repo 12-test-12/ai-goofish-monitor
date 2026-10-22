@@ -2,6 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Keep navigation fixed while the workspace scrolls inside a desktop window. */
+.desktop-shell,
+.desktop-shell body,
+.desktop-shell #app {
+  height: 100%;
+  overflow: hidden;
+}
+.desktop-shell .desktop-workspace {
+  height: 100dvh;
+  min-height: 0;
+}
+.desktop-shell .desktop-content {
+  min-height: 0;
+}
+.desktop-shell .desktop-main {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.desktop-shell .desktop-sidebar {
+  height: 100%;
+  overflow-y: auto;
+}
+
 @layer base {
   :root {
     --background: 210 40% 98%;

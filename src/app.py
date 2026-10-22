@@ -131,7 +131,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 import os
 import sys
 from pathlib import Path
-FRONTEND_DIR = Path(sys._MEIPASS) / "dist" if getattr(sys, "frozen", False) else Path("dist")
+FRONTEND_DIR = Path(sys._MEIPASS) / "dist" if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1] / "dist"
 if (FRONTEND_DIR / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="assets")
 
@@ -146,6 +146,14 @@ async def health_check():
 # 认证状态检查端点
 from fastapi import Request
 from fastapi.responses import FileResponse
+
+
+@app.get("/app-icon.png", include_in_schema=False)
+async def app_icon():
+    path = FRONTEND_DIR / "app-icon.png"
+    if path.is_file():
+        return FileResponse(path, media_type="image/png")
+    return JSONResponse(status_code=404, content={"error": "资源未找到"})
 
 
 # 主页路由 - 服务 Vue 3 SPA

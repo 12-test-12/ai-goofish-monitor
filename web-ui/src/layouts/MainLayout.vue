@@ -9,7 +9,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div class="relative min-h-screen w-full flex flex-col bg-background selection:bg-primary/15">
+  <div class="desktop-workspace relative min-h-screen w-full flex flex-col bg-background selection:bg-primary/15">
     <a
       href="#main-content"
       class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[120] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
@@ -41,14 +41,14 @@ const { t } = useI18n()
       </div>
     </transition>
 
-    <div class="flex flex-grow relative z-10">
+    <div class="desktop-content flex flex-grow relative z-10">
       <!-- Sidebar -->
       <aside class="hidden md:block w-64 flex-shrink-0 border-r border-slate-200/60 bg-white/40 backdrop-blur-sm">
-        <TheSidebar class="sticky top-16 h-[calc(100vh-4rem)] p-4" />
+        <TheSidebar class="desktop-sidebar sticky top-16 h-[calc(100vh-4rem)] p-4" />
       </aside>
 
       <!-- Main Content Area -->
-      <main id="main-content" tabindex="-1" class="flex-grow overflow-x-hidden p-4 focus:outline-none md:p-8">
+      <main id="main-content" tabindex="-1" class="desktop-main min-w-0 flex-grow overflow-x-hidden p-4 focus:outline-none md:p-8">
         <div class="max-w-7xl mx-auto animate-fade-in">
           <RouterView v-slot="{ Component }">
             <transition name="page" mode="out-in">

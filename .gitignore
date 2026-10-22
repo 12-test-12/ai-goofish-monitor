@@ -18,3 +18,5 @@ data/
 audit/
 tests/audit/
 .venv-ci*/
+.desktop.lock
+desktop-profile/

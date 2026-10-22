@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import DashboardTaskSearch from '@/components/layout/DashboardTaskSearch.vue'
 import LocaleToggle from '@/components/layout/LocaleToggle.vue'
 import { 
-  Zap, 
   Bell, 
   Search, 
   UserCircle,
@@ -45,14 +44,12 @@ function goPrompts() {
       class="flex items-center gap-2 group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       :aria-label="t('header.goHome')"
     >
-      <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/20 transition-transform group-hover:rotate-12">
-        <Zap class="w-5 h-5 text-white fill-white" />
-      </div>
+      <img src="/app-icon.png" alt="" width="40" height="40" class="h-10 w-10 shrink-0 object-contain" />
       <h1 class="text-lg font-black text-slate-800 tracking-tighter">
-        AI <span class="text-primary">Xianyu</span> Hunter
+        Goofish <span class="text-primary">Monitor</span>
       </h1>
       <Badge variant="outline" class="ml-2 text-[10px] font-bold border-primary/20 text-primary bg-primary/5 uppercase tracking-widest hidden sm:flex">
-        PRO
+        AI
       </Badge>
     </RouterLink>
 
