@@ -112,18 +112,20 @@ def _build_fallback_summary(task_name: str, keyword: str) -> dict[str, Any]:
 
 
 def _resolve_task(
-    task_lookup: dict[str, Task],
+    task_lookup: dict[int, Task],
     latest_record: dict[str, Any] | None,
     keyword: str,
 ) -> Task | None:
-    task = task_lookup.get(normalize_text(keyword))
-    if task is not None or latest_record is None:
-        return task
-    fallback_name = str(latest_record.get("任务名称") or "")
-    return next(
-        (candidate for candidate in task_lookup.values() if candidate.task_name == fallback_name),
-        None,
-    )
+    record = latest_record or {}
+    task_id = record.get("任务ID")
+    if isinstance(task_id, int) and not isinstance(task_id, bool) and task_id >= 0:
+        return task_lookup.get(task_id)
+    name = str(record.get("任务名称") or "")
+    candidates = [task for task in task_lookup.values() if normalize_text(task.keyword) == normalize_text(keyword)]
+    named = [task for task in candidates if task.task_name == name]
+    if len(named) == 1:
+        return named[0]
+    return candidates[0] if len(candidates) == 1 and not name else None
 
 
 def _collect_record_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -226,16 +228,17 @@ def _build_scan_activity(
 
 async def summarize_result_file(
     filename: str,
-    task_lookup: dict[str, Task],
+    task_lookup: dict[int, Task],
+    *, task_id: int | None = None, legacy_task_name: str | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], datetime | None]:
-    metrics = await load_result_summary(filename)
+    metrics = await load_result_summary(filename, task_id=task_id, task_name=legacy_task_name)
     if not metrics:
         return None, [], None
 
     latest_record = metrics["latest_record"]
     latest_crawl_time = parse_timestamp(metrics["latest_crawl_time"])
     keyword = str((latest_record or {}).get("搜索关键字") or "") or normalize_keyword_from_filename(filename)
-    task = _resolve_task(task_lookup, latest_record, keyword)
+    task = task_lookup.get(task_id) if task_id is not None and task_id >= 0 else _resolve_task(task_lookup, latest_record, keyword)
     task_name = task.task_name if task else str((latest_record or {}).get("任务名称") or keyword)
     summary = build_empty_summary(task) if task else _build_fallback_summary(task_name, keyword)
 
@@ -247,6 +250,7 @@ async def summarize_result_file(
         latest_recommendation=metrics["latest_recommendation"],
     )
     if recommendation:
+        recommendation["id"] += f":{task_id}:{legacy_task_name or ''}"
         activities.append(recommendation)
 
     scan_activity = _build_scan_activity(
@@ -257,6 +261,7 @@ async def summarize_result_file(
         total_items=metrics["total_items"],
     )
     if scan_activity:
+        scan_activity["id"] += f":{task_id}:{legacy_task_name or ''}"
         activities.append(scan_activity)
 
     summary.update(
@@ -269,6 +274,7 @@ async def summarize_result_file(
             "latest_crawl_time": serialize_timestamp(latest_crawl_time),
             "latest_recommended_title": title,
             "latest_recommended_price": price,
+            "latest_recommendation_time": (metrics["latest_recommendation"] or {}).get("爬取时间"),
         }
     )
     return summary, activities, latest_crawl_time

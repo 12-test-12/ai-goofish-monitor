@@ -7,8 +7,9 @@ from src.services.price_history_service import (
     build_item_price_context,
     load_price_snapshots,
     parse_price_value,
+    normalize_keyword_slug,
 )
-from src.services.result_storage_service import load_visible_result_item_ids
+from src.services.result_storage_service import load_visible_market_summary
 
 
 def validate_result_filename(filename: str) -> None:
@@ -25,8 +26,7 @@ def enrich_records_with_price_insight(records: list[dict], filename: str) -> lis
     if not snapshots:
         return records
 
-    visible_item_ids = load_visible_result_item_ids(filename)
-    visible_snapshots = load_price_snapshots(keyword, item_ids=visible_item_ids, latest_run_only=True)
+    market_summary = load_visible_market_summary(filename, normalize_keyword_slug(keyword))
     enriched = []
     for record in records:
         info = record.get("商品信息", {}) or {}
@@ -35,7 +35,7 @@ def enrich_records_with_price_insight(records: list[dict], filename: str) -> lis
             snapshots,
             item_id=str(info.get("商品ID") or ""),
             current_price=parse_price_value(info.get("当前售价")),
-            market_snapshots=visible_snapshots,
+            market_summary=market_summary,
         )
         enriched.append(clone)
     return enriched

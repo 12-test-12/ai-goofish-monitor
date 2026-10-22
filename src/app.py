@@ -30,6 +30,7 @@ from src.services.scheduler_service import SchedulerService
 from src.services.task_log_cleanup_service import cleanup_task_logs
 from src.services.task_generation_service import TaskGenerationService
 from src.services.maintenance_service import image_cache_maintenance
+from src.services.notification_outbox_service import notification_delivery_worker
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.config.settings import settings as app_settings
@@ -90,7 +91,7 @@ async def lifespan(app: FastAPI):
     print("应用启动完成")
 
     try:
-        async with image_cache_maintenance(max_age_hours=app_settings.image_cache_max_age_hours):
+        async with image_cache_maintenance(max_age_hours=app_settings.image_cache_max_age_hours), notification_delivery_worker():
             yield
     finally:
         print("正在关闭应用...")

@@ -4,7 +4,7 @@
 """
 import os
 import sys
-import time
+import threading
 import webbrowser
 import argparse
 import asyncio
@@ -47,6 +47,15 @@ def _prepare_environment() -> None:
         sys.path.insert(0, str(BASE_DIR))
 
 
+def _open_when_ready(server, url: str, stopped: threading.Event) -> None:
+    while not stopped.wait(0.05):
+        if server.should_exit:
+            return
+        if server.started:
+            webbrowser.open(url)
+            return
+
+
 def run_app(*, open_browser: bool = True) -> None:
     """启动 FastAPI 应用并自动打开浏览器"""
     _prepare_environment()
@@ -54,19 +63,22 @@ def run_app(*, open_browser: bool = True) -> None:
     from src.app import app
     from src.infrastructure.config.settings import settings
 
-    # 先尝试打开浏览器，稍等服务起来
     url = f"http://127.0.0.1:{settings.server_port}"
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=settings.server_port,
+        log_level="info", reload=False, use_colors=False,
+    ))
+    stopped = threading.Event()
+    opener = None
     if open_browser:
-        webbrowser.open(url)
-        time.sleep(0.5)
-
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=settings.server_port,
-        log_level="info",
-        reload=False,
-    )
+        opener = threading.Thread(target=_open_when_ready, args=(server, url, stopped), daemon=True)
+        opener.start()
+    try:
+        server.run()
+    finally:
+        stopped.set()
+        if opener is not None:
+            opener.join(timeout=1)
 
 
 def main(argv=None) -> None:

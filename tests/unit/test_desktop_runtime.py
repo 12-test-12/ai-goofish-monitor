@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -67,3 +68,22 @@ def test_periodic_cache_sweeps_stop_when_application_exits(monkeypatch):
         await asyncio.sleep(0.03)
         assert len(calls) == count
     asyncio.run(run())
+
+
+def test_browser_opens_only_after_server_is_ready_and_not_after_failure(monkeypatch):
+    opened = threading.Event()
+    server = SimpleNamespace(started=False, should_exit=False)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda _: opened.set())
+    stop = threading.Event()
+    thread = threading.Thread(target=launcher._open_when_ready, args=(server, "http://127.0.0.1", stop))
+    thread.start()
+    try:
+        assert not opened.wait(timeout=0.1)
+        server.started = True
+        assert opened.wait(timeout=1)
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+    opened.clear()
+    launcher._open_when_ready(SimpleNamespace(started=False, should_exit=True), "http://127.0.0.1", threading.Event())
+    assert not opened.is_set()

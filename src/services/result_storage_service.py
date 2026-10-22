@@ -25,6 +25,16 @@ SORT_COLUMN_MAP = {
     "keyword_hit_count": "keyword_hit_count",
 }
 
+# Guard json_type with CASE: SQLite may reorder separate WHERE predicates.
+# Optional object fields must be objects or null before downstream .get() calls.
+VALID_RECORD_SQL = """CASE WHEN json_valid(raw_json) THEN
+    json_type(raw_json) = 'object'
+    AND COALESCE(json_type(raw_json, '$.\"商品信息\"'), 'null') IN ('object', 'null')
+    AND COALESCE(json_type(raw_json, '$.\"卖家信息\"'), 'null') IN ('object', 'null')
+    AND COALESCE(json_type(raw_json, '$.ai_analysis'), 'null') IN ('object', 'null')
+    AND COALESCE(json_type(raw_json, '$.price_insight'), 'null') IN ('object', 'null')
+    ELSE 0 END"""
+
 
 def _get_link_unique_key(link: str) -> str:
     return link.split("&", 1)[0]
@@ -42,6 +52,14 @@ def _fallback_unique_key(record: dict, item: dict) -> str:
 
 def _parse_raw_record(raw_json: str, *, status: str | None = None) -> dict:
     record = json.loads(raw_json)
+    if not isinstance(record, dict):
+        raise ValueError("结果记录必须是 JSON 对象")
+    for field in ("商品信息", "卖家信息", "ai_analysis", "price_insight"):
+        if field in record:
+            if record[field] is None:
+                record[field] = {}
+            elif not isinstance(record[field], dict):
+                raise ValueError(f"结果字段 {field} 必须是 JSON 对象")
     if status is not None:
         record["_status"] = status
     return record
@@ -53,7 +71,7 @@ def _build_query_conditions(
     ai_recommended_only: bool,
     keyword_recommended_only: bool,
 ) -> tuple[str, list]:
-    conditions = ["result_filename = ?"]
+    conditions = ["result_filename = ?", f"({VALID_RECORD_SQL})"]
     params: list = [filename]
     if ai_recommended_only:
         conditions.append("is_recommended = 1")
@@ -85,7 +103,9 @@ def _load_blacklist_keywords_from_conn(conn, filename: str) -> list[str]:
         return []
     try:
         payload = json.loads(row["blacklist_keywords_json"] or "[]")
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(payload, (list, str)):
         return []
     return normalize_blacklist_keywords(payload)
 
@@ -121,9 +141,9 @@ def _query_scope(conn, filename, ai_only=False, keyword_only=False, include_hidd
         if keywords:
             def _check_blacklisted(raw):
                 try:
-                    return bool(match_blacklist_keywords(json.loads(raw), keywords))
-                except Exception:
-                    return False
+                    return bool(match_blacklist_keywords(_parse_raw_record(raw), keywords))
+                except (ValueError, TypeError, AttributeError, RecursionError):
+                    return True
             conn.create_function("is_blacklisted", 1, _check_blacklisted)
             where += " AND is_blacklisted(raw_json) = 0"
     return where, params, keywords
@@ -207,6 +227,9 @@ def _save_result_record_sync(record: dict, keyword: str) -> bool:
                 record.get("任务ID") if record.get("任务ID") is not None else -1,
             ),
         )
+        if cursor.rowcount:
+            from src.services.notification_outbox_service import enqueue_recommendation
+            enqueue_recommendation(conn, cursor.lastrowid, record)
         conn.commit()
     return cursor.rowcount > 0
 
@@ -216,7 +239,7 @@ def load_processed_link_keys(keyword: str, task_id: int | None = None) -> set[st
     filename = build_result_filename(keyword)
     with sqlite_connection() as conn:
         rows = conn.execute(
-            "SELECT link_unique_key FROM result_items WHERE result_filename = ? AND task_id = ?",
+            f"SELECT link_unique_key FROM result_items WHERE result_filename = ? AND task_id = ? AND ({VALID_RECORD_SQL})",
             (filename, task_id if task_id is not None else -1),
         ).fetchall()
     return {str(row["link_unique_key"]) for row in rows if row["link_unique_key"]}
@@ -230,9 +253,10 @@ def _list_result_filenames_sync() -> list[str]:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT result_filename, MAX(crawl_time) AS latest_crawl_time
             FROM result_items
+            WHERE ({VALID_RECORD_SQL})
             GROUP BY result_filename
             ORDER BY latest_crawl_time DESC, result_filename DESC
             """
@@ -366,21 +390,52 @@ def _build_result_ndjson_sync(filename: str) -> str:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
         rows = conn.execute(
-            "SELECT raw_json FROM result_items WHERE result_filename = ? ORDER BY id ASC",
+            f"SELECT raw_json FROM result_items WHERE result_filename = ? AND ({VALID_RECORD_SQL}) ORDER BY id ASC",
             (filename,),
         ).fetchall()
     return "\n".join(str(row["raw_json"]) for row in rows)
 
 
-async def load_result_summary(filename: str) -> dict | None:
-    return await asyncio.to_thread(_load_result_summary_sync, filename)
+def iter_result_batches(filename: str, *, ai_recommended_only=False, keyword_recommended_only=False,
+                        sort_by="crawl_time", sort_order="desc", include_hidden=False, batch_size=200):
+    """Consume in a single worker thread, keeping one stable read snapshot."""
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        conn.execute("BEGIN")
+        where, params, keywords = _query_scope(conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden)
+        cursor = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order)}", params)
+        while rows := cursor.fetchmany(batch_size):
+            yield [_decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) for row in rows]
 
 
-def _load_result_summary_sync(filename: str) -> dict | None:
+def write_result_ndjson(filename: str, output) -> None:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        cursor = conn.execute(f"SELECT raw_json FROM result_items WHERE result_filename = ? AND ({VALID_RECORD_SQL}) ORDER BY id", (filename,))
+        first = True
+        while rows := cursor.fetchmany(200):
+            for row in rows:
+                if not first:
+                    output.write("\n")
+                output.write(row["raw_json"])
+                first = False
+
+
+async def load_result_summary(filename: str, *, task_id: int | None = None, task_name: str | None = None) -> dict | None:
+    return await asyncio.to_thread(_load_result_summary_sync, filename, task_id, task_name)
+
+
+def _load_result_summary_sync(filename: str, task_id: int | None = None, task_name: str | None = None) -> dict | None:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
         conn.execute("BEGIN")
         where, params, keywords = _query_scope(conn, filename)
+        if task_id is not None:
+            where += " AND task_id = ?"
+            params.append(task_id)
+        if task_name is not None:
+            where += " AND task_name = ?"
+            params.append(task_name)
         counts = conn.execute(f"""SELECT COUNT(*) AS total_items,
             SUM(is_recommended) AS recommended_items,
             SUM(is_recommended = 1 AND analysis_source = 'ai') AS ai_recommended_items,
@@ -400,6 +455,20 @@ def _load_result_summary_sync(filename: str) -> dict | None:
         }
         return {**counts_dict, "latest_crawl_time": latest_record.get("爬取时间") if latest_record else None,
                 "latest_record": latest_record, "latest_recommendation": latest("AND is_recommended = 1")}
+
+
+async def list_result_groups() -> list[dict]:
+    def read():
+        bootstrap_sqlite_storage()
+        with sqlite_connection() as conn:
+            return [dict(row) for row in conn.execute(f"""
+                SELECT result_filename, task_id,
+                    CASE WHEN task_id = -1 THEN task_name ELSE '' END AS legacy_task_name
+                FROM result_items WHERE ({VALID_RECORD_SQL})
+                GROUP BY result_filename, task_id, legacy_task_name
+                ORDER BY result_filename, task_id, legacy_task_name
+            """)]
+    return await asyncio.to_thread(read)
 
 
 async def update_item_status(filename: str, item_id: str, status: str) -> bool:
@@ -459,3 +528,26 @@ def load_visible_result_item_ids(filename: str) -> set[str]:
     with sqlite_connection() as conn:
         where, params, _ = _query_scope(conn, filename)
         return {str(row[0]).strip() for row in conn.execute(f"SELECT DISTINCT item_id FROM result_items WHERE {where} AND item_id IS NOT NULL AND item_id != ''", params)}
+
+
+def load_visible_market_summary(filename: str, keyword_slug: str) -> dict:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        where, params, _ = _query_scope(conn, filename)
+        row = conn.execute(f"""WITH visible AS (
+                SELECT DISTINCT item_id FROM result_items WHERE {where}
+            ), observations AS (
+                SELECT * FROM price_snapshots WHERE keyword_slug = ?
+                    AND item_id IN (SELECT item_id FROM visible)
+                    AND typeof(price) IN ('real', 'integer')
+            ), ranked AS (
+                SELECT price, ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY snapshot_time DESC, id DESC) AS seq
+                FROM observations WHERE run_id = (SELECT run_id FROM observations ORDER BY snapshot_time DESC, id DESC LIMIT 1)
+            ), prices AS (
+                SELECT price, ROW_NUMBER() OVER (ORDER BY price) AS position, COUNT(*) OVER () AS n
+                FROM ranked WHERE seq = 1
+            ) SELECT COUNT(*) AS sample_count, ROUND(AVG(price), 2) AS avg_price,
+                (SELECT ROUND(AVG(price), 2) FROM prices WHERE position IN ((n+1)/2, (n+2)/2)) AS median_price,
+                MIN(price) AS min_price, MAX(price) AS max_price FROM prices
+            """, [*params, keyword_slug]).fetchone()
+        return dict(row)

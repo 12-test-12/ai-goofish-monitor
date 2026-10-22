@@ -98,6 +98,19 @@ SCHEMA_STATEMENTS = (
         updated_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS notification_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        result_id INTEGER NOT NULL UNIQUE REFERENCES result_items(id) ON DELETE CASCADE,
+        product_json TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        pending_channels_json TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        available_at REAL NOT NULL DEFAULT 0,
+        last_error TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_notification_due ON notification_outbox(available_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_tasks_name ON tasks(task_name)",
     """
     CREATE INDEX IF NOT EXISTS idx_results_filename_crawl

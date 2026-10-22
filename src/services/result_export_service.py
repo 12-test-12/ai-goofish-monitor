@@ -36,8 +36,14 @@ def _safe_csv_cell(value):
 
 def build_results_csv(records: list[dict]) -> str:
     buffer = StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=EXPORT_HEADERS)
-    writer.writeheader()
+    write_results_csv(records, buffer)
+    return buffer.getvalue()
+
+
+def write_results_csv(records, output, *, include_header=True) -> None:
+    writer = csv.DictWriter(output, fieldnames=EXPORT_HEADERS)
+    if include_header:
+        writer.writeheader()
 
     for record in records:
         item = record.get("商品信息", {}) or {}
@@ -64,5 +70,3 @@ def build_results_csv(records: list[dict]) -> str:
                 "商品链接": item.get("商品链接", ""),
         }
         writer.writerow({key: _safe_csv_cell(value) for key, value in row.items()})
-
-    return buffer.getvalue()

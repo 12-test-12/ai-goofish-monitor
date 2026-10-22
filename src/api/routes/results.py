@@ -2,23 +2,23 @@
 结果文件管理路由
 """
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
+import asyncio
+from pathlib import Path
 from enum import Enum
 
 from pydantic import BaseModel
 from urllib.parse import quote
 
 from src.services.price_history_service import build_price_history_insights
-from src.services.result_export_service import build_results_csv
+from src.services.result_download_service import create_result_download
 from src.services.result_file_service import (
     enrich_records_with_price_insight,
     validate_result_filename,
 )
 from src.services.result_storage_service import (
-    build_result_ndjson,
     delete_result_file_records,
     list_result_filenames,
-    load_all_result_records,
     load_result_blacklist_keywords,
     load_visible_result_item_ids,
     query_result_records,
@@ -33,10 +33,24 @@ router = APIRouter(prefix="/api/results", tags=["results"])
 DEFAULT_EXPORT_FILENAME = "export.csv"
 
 
-def _build_download_headers(export_name: str) -> dict[str, str]:
+class ResultDownloadResponse(FileResponse):
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            Path(self.path).unlink(missing_ok=True)
+
+
+def _build_insights(filename):
+    keyword = filename.replace("_full_data.jsonl", "")
+    return build_price_history_insights(keyword, visible_item_ids=load_visible_result_item_ids(filename))
+
+
+def _build_download_headers(export_name: str, fallback=DEFAULT_EXPORT_FILENAME) -> dict[str, str]:
     ascii_name = export_name.encode("ascii", "ignore").decode("ascii")
     if ascii_name != export_name or not ascii_name:
-        ascii_name = DEFAULT_EXPORT_FILENAME
+        ascii_name = fallback
+    ascii_name = "".join(char for char in ascii_name if 32 <= ord(char) < 127 and char not in '\\";') or fallback
     encoded_name = quote(export_name, safe="")
     return {
         "Content-Disposition": (
@@ -59,10 +73,11 @@ async def download_result_file(filename: str):
         return {"error": "非法的文件路径"}
     if not filename.endswith(".jsonl") or not await result_file_exists(filename):
         return {"error": "文件不存在"}
-    return Response(
-        content=await build_result_ndjson(filename),
+    path = await create_result_download(filename)
+    return ResultDownloadResponse(
+        path=path,
         media_type="application/x-ndjson",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=_build_download_headers(filename, "export.jsonl"),
     )
 
 
@@ -116,7 +131,7 @@ async def get_result_file_content(
         raise HTTPException(status_code=500, detail=f"读取结果文件时出错: {exc}")
     if total_items <= 0 and not await result_file_exists(filename):
         raise HTTPException(status_code=404, detail="结果文件未找到")
-    paginated_results = enrich_records_with_price_insight(items, filename)
+    paginated_results = await asyncio.to_thread(enrich_records_with_price_insight, items, filename)
 
     return {
         "total_items": total_items,
@@ -130,9 +145,7 @@ async def get_result_file_content(
 async def get_result_file_insights(filename: str):
     try:
         validate_result_filename(filename)
-        keyword = filename.replace("_full_data.jsonl", "")
-        visible_item_ids = load_visible_result_item_ids(filename)
-        return build_price_history_insights(keyword, visible_item_ids=visible_item_ids)
+        return await asyncio.to_thread(_build_insights, filename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -154,27 +167,26 @@ async def export_result_file_content(
 
     try:
         validate_result_filename(filename)
-        results = await load_all_result_records(
+        if not await result_file_exists(filename):
+            raise HTTPException(status_code=404, detail="结果文件未找到")
+        path = await create_result_download(
             filename,
+            csv_export=True,
             ai_recommended_only=ai_recommended_only,
             keyword_recommended_only=keyword_recommended_only,
             sort_by=sort_by,
             sort_order=sort_order,
             include_hidden=include_hidden,
         )
-        csv_text = build_results_csv(
-            enrich_records_with_price_insight(results, filename)
-        )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"导出结果文件时出错: {exc}")
-    if not results and not await result_file_exists(filename):
-        raise HTTPException(status_code=404, detail="结果文件未找到")
-
     export_name = filename.replace(".jsonl", ".csv")
     headers = _build_download_headers(export_name)
-    return Response(content=csv_text, media_type="text/csv; charset=utf-8", headers=headers)
+    return ResultDownloadResponse(path=path, media_type="text/csv; charset=utf-8", headers=headers)
 
 
 class ItemStatus(str, Enum):

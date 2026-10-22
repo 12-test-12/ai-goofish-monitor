@@ -56,7 +56,9 @@ class NotificationService:
         reason: str,
     ) -> Dict[str, str | bool]:
         try:
-            await client.send(product_data, reason)
+            sent = await client.send(product_data, reason)
+            if sent is False:
+                raise RuntimeError("通知渠道未确认发送成功")
             return {
                 "channel": client.channel_key,
                 "label": client.display_name,

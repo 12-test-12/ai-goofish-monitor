@@ -22,6 +22,10 @@ SPIDER_DEBUG_LIMIT_ENV = "SPIDER_DEBUG_LIMIT"
 LifecycleHook = Callable[[int], Awaitable[None] | None]
 
 
+class TaskDeletionError(RuntimeError):
+    pass
+
+
 class ProcessService:
     """进程管理服务"""
 
@@ -33,6 +37,8 @@ class ProcessService:
         self.exit_watchers: Dict[int, asyncio.Task] = {}
         self.failure_guard = FailureGuard()
         self._starting_task_ids: Set[int] = set()
+        self._deleting_task_ids: Set[int] = set()
+        self._deleted_task_ids: Set[int] = set()
         self._on_started: LifecycleHook | None = None
         self._on_stopped: LifecycleHook | None = None
 
@@ -67,6 +73,20 @@ class ProcessService:
         """检查任务是否正在运行"""
         process = self.processes.get(task_id)
         return process is not None and process.returncode is None
+
+    def is_starting(self, task_id: int) -> bool:
+        return task_id in self._starting_task_ids
+
+    @contextlib.asynccontextmanager
+    async def protect_task_deletion(self, task_id: int):
+        if self.is_starting(task_id) or task_id in self._deleting_task_ids:
+            raise TaskDeletionError("任务正在启动或删除，请稍后重试")
+        self._deleting_task_ids.add(task_id)
+        try:
+            yield
+            self._deleted_task_ids.add(task_id)
+        finally:
+            self._deleting_task_ids.discard(task_id)
 
     async def _drain_finished_process(self, task_id: int) -> None:
         process = self.processes.get(task_id)
@@ -133,7 +153,7 @@ class ProcessService:
     async def start_task(self, task_id: int, task_name: str) -> bool:
         """启动任务进程"""
         await self._drain_finished_process(task_id)
-        if self.is_running(task_id) or task_id in self._starting_task_ids:
+        if self.is_running(task_id) or task_id in self._starting_task_ids or task_id in self._deleting_task_ids or task_id in self._deleted_task_ids:
             print(f"任务 '{task_name}' (ID: {task_id}) 已在运行或启动中")
             return False
 

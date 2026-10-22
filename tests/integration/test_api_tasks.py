@@ -1,5 +1,6 @@
 import asyncio
 import time
+from unittest.mock import AsyncMock
 
 
 def test_create_list_update_delete_task(api_client, api_context, sample_task_payload):
@@ -193,3 +194,14 @@ def test_delete_task_stops_runtime_and_reindexes_process_state(
     process_service = api_context["process_service"]
     assert process_service.stopped == [0]
     assert process_service.reindexed == []
+
+
+def test_failed_stop_preserves_task_and_reports_conflict(api_client, api_context, sample_task_payload, monkeypatch):
+    assert api_client.post("/api/tasks/", json=sample_task_payload).status_code == 200
+    assert api_client.post("/api/tasks/start/0").status_code == 200
+    process = api_context["process_service"]
+    monkeypatch.setattr(process, "stop_task", AsyncMock(return_value=False))
+    assert api_client.delete("/api/tasks/0").status_code == 409
+    tasks = api_client.get("/api/tasks").json()
+    assert len(tasks) == 1 and tasks[0]["is_running"] is True
+    assert api_client.post("/api/tasks/stop/0").status_code == 409

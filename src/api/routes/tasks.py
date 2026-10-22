@@ -12,7 +12,7 @@ from src.api.dependencies import (
     get_task_service,
 )
 from src.services.task_service import TaskService
-from src.services.process_service import ProcessService
+from src.services.process_service import ProcessService, TaskDeletionError
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_generation_runner import (
@@ -229,10 +229,16 @@ async def delete_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务未找到")
 
-    await process_service.stop_task(task_id)
-    success = await service.delete_task(task_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="任务未找到")
+    try:
+        async with process_service.protect_task_deletion(task_id):
+            await process_service.stop_task(task_id)
+            if process_service.is_running(task_id):
+                raise HTTPException(status_code=409, detail="任务进程未能停止，已保留任务，请重试停止后再删除")
+            success = await service.delete_task(task_id)
+            if not success:
+                raise HTTPException(status_code=404, detail="任务未找到")
+    except TaskDeletionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     await _reload_scheduler_if_needed(service, scheduler_service)
     try:
         keyword = (task.keyword or "").strip()
@@ -284,4 +290,6 @@ async def stop_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务未找到")
     await process_service.stop_task(task_id)
+    if process_service.is_running(task_id) or process_service.is_starting(task_id):
+        raise HTTPException(status_code=409, detail="任务仍在运行或启动中，停止未完成，请重试")
     return {"message": f"任务ID {task_id} 已发送停止信号"}

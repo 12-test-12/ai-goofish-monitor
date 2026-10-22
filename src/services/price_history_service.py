@@ -297,6 +297,7 @@ def build_item_price_context(
     item_id: str,
     current_price: Optional[float],
     market_snapshots: Optional[list[dict]] = None,
+    market_summary: Optional[dict] = None,
 ) -> dict:
     if not item_id:
         return {"observation_count": 0, "deal_score": None, "deal_label": "暂无数据"}
@@ -308,13 +309,14 @@ def build_item_price_context(
     latest_item_snapshot = item_snapshots[-1]
     price_now = current_price if current_price is not None else parse_price_value(latest_item_snapshot.get("price"))
     historical_prices = [float(record["price"]) for record in item_snapshots if parse_price_value(record.get("price")) is not None]
-    source_snapshots = market_snapshots if market_snapshots is not None else snapshots
-    latest_run_id = str(source_snapshots[-1].get("run_id") or "") if source_snapshots else ""
-    latest_market = _dedupe_latest(
-        [record for record in source_snapshots if str(record.get("run_id") or "") == latest_run_id],
-        "item_id",
-    )
-    market_summary = _summarize_prices(latest_market)
+    if market_summary is None:
+        source_snapshots = market_snapshots if market_snapshots is not None else snapshots
+        latest_run_id = str(source_snapshots[-1].get("run_id") or "") if source_snapshots else ""
+        latest_market = _dedupe_latest(
+            [record for record in source_snapshots if str(record.get("run_id") or "") == latest_run_id],
+            "item_id",
+        )
+        market_summary = _summarize_prices(latest_market)
     market_avg = market_summary.get("avg_price")
     market_median = market_summary.get("median_price")
 

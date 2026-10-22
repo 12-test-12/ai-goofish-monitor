@@ -62,6 +62,7 @@ from src.services.result_storage_service import load_processed_link_keys
 from src.services.seller_profile_cache import SellerProfileCache
 from src.services.browser_pool import browser_slot
 from src.services.image_cache_service import task_image_lease
+from src.services.notification_outbox_service import dispatch_pending_notifications, send_queued_recommendation
 from src.services.search_pagination import (
     advance_search_page,
     is_search_results_response,
@@ -546,6 +547,7 @@ async def scrape_user_profile(context, user_id: str) -> dict:
 
 
 async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
+    await dispatch_pending_notifications(batch_size=1)
     image_key = f"task-id:{task_config['id']}" if task_config.get("id") is not None else task_config.get("task_name", "default")
     async with task_image_lease(image_key):
         try:
@@ -710,7 +712,7 @@ async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
                 ),
                 image_downloader=lambda product_id, urls, _name: download_all_images(product_id, urls, image_task_key),
                 ai_analyzer=get_ai_analysis,
-                notifier=send_ntfy_notification,
+                notifier=send_queued_recommendation,
                 saver=save_to_jsonl,
             )
 

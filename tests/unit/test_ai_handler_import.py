@@ -16,16 +16,28 @@ def test_import_keeps_captured_or_missing_stdio_untouched():
 @pytest.mark.parametrize("missing_stdout", [False, True])
 def test_desktop_source_entry_supports_captured_or_missing_stdio(missing_stdout):
     script = textwrap.dedent(f"""
-        import io, sys
+        import io, sys, threading
         real_err = sys.__stderr__
         stream = None if {missing_stdout!r} else io.StringIO()
         sys.stdout, sys.stderr = stream, None
         try:
             import desktop_launcher as launcher
             calls = {{}}
-            launcher.webbrowser.open = lambda url: calls.update(url=url)
-            launcher.time.sleep = lambda _: None
-            launcher.uvicorn.run = lambda app, **kwargs: calls.update(app=app, **kwargs)
+            opened = threading.Event()
+            def open_browser(url):
+                calls.update(url=url)
+                opened.set()
+            launcher.webbrowser.open = open_browser
+            launcher.uvicorn.Config = lambda app, **kwargs: calls.update(app=app, **kwargs)
+            class Server:
+                started = False
+                should_exit = False
+                def __init__(self, _config):
+                    pass
+                def run(self):
+                    self.started = True
+                    assert opened.wait(timeout=2)
+            launcher.uvicorn.Server = Server
             launcher.run_app()
             assert calls['host'] == '127.0.0.1'
             assert calls['app'] is not None

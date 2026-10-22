@@ -162,6 +162,9 @@ class SqliteTaskRepository(TaskRepository):
         with sqlite_connection(self.db_path) as conn:
             cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             if cursor.rowcount:
+                conn.execute("""DELETE FROM notification_outbox WHERE result_id IN (
+                    SELECT id FROM result_items WHERE task_id = ?
+                )""", (task_id,))
                 # Older databases may not have allocated an ID since upgrading.
                 # Preserve deleted IDs before they disappear from MAX(id).
                 self._remember_task_id(conn, task_id)
