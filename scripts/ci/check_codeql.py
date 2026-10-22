@@ -74,12 +74,13 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--min-score", type=float, default=7.0)
+    parser.add_argument("--soft-fail", action="store_true", help="Log warnings but do not return non-zero exit code on findings")
     args = parser.parse_args(argv)
     try:
         total, blocked = check_reports(args.directory, args.min_score)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         print(f"CodeQL gate failed: {exc}", file=sys.stderr)
-        return 2
+        return 0 if args.soft_fail else 2
 
     message = f"CodeQL: {total} findings, {blocked} blocking (threshold {args.min_score:g})."
     print(message)
@@ -87,6 +88,9 @@ def main(argv=None) -> int:
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as summary:
             summary.write(message + "\n\nSee the CodeQL artifact and Security → Code scanning for details.\n")
+    if blocked and args.soft_fail:
+        print("Note: --soft-fail enabled, continuing workflow despite findings.")
+        return 0
     return 1 if blocked else 0
 
 

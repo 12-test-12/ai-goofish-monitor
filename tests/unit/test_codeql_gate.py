@@ -104,3 +104,11 @@ def test_codeql_gate_rejects_invalid_threshold(tmp_path, score):
     write_report(tmp_path)
     with pytest.raises(ValueError, match="threshold"):
         check_reports(tmp_path, min_score=score)
+
+
+def test_codeql_gate_soft_fail(tmp_path):
+    write_report(tmp_path, score="9.5")
+    # Without --soft-fail, it blocks (exit code 1)
+    assert main([str(tmp_path)]) == 1
+    # With --soft-fail, it reports finding but exits 0
+    assert main([str(tmp_path), "--soft-fail"]) == 0
