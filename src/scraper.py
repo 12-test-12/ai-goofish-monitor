@@ -1221,11 +1221,12 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 if analysis_dispatcher is not None:
                     log_time("等待后台分析任务完成...")
                     await analysis_dispatcher.join()
-                log_time("任务执行完毕，浏览器将在5秒后自动关闭...")
-                await asyncio.sleep(5)
-                if debug_limit:
-                    input("按回车键关闭浏览器...")
-                await browser.close()
+                if browser is not None:
+                    try:
+                        log_time("任务执行完毕，正在关闭浏览器释放内存资源...")
+                        await browser.close()
+                    except Exception as close_err:
+                        log_time(f"关闭浏览器时出现非致命异常: {close_err}")
 
         return processed_item_count
 

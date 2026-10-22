@@ -109,3 +109,43 @@ def test_process_service_adds_debug_limit_arg_when_env_enabled(monkeypatch):
         "--debug-limit",
         "1",
     ]
+
+
+def test_process_service_windows_terminate_invokes_taskkill(monkeypatch):
+    service = ProcessService()
+    taskkill_calls = []
+
+    async def fake_taskkill(pid: int):
+        taskkill_calls.append(pid)
+
+    monkeypatch.setattr(service, "_kill_process_tree_windows", fake_taskkill)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    fake_proc = FakeProcess(pid=9999)
+
+    async def run():
+        # Set finished immediately on wait to simulate normal termination flow
+        fake_proc.finish(0)
+        await service._terminate_process(fake_proc, 1)
+
+    asyncio.run(run())
+    assert taskkill_calls == [9999]
+
+
+def test_process_service_kill_process_tree_executes_taskkill_command(monkeypatch):
+    service = ProcessService()
+    exec_args = []
+
+    class DummyProc:
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*args, **kwargs):
+        exec_args.append(args)
+        return DummyProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    asyncio.run(service._kill_process_tree_windows(8888))
+    assert len(exec_args) == 1
+    assert exec_args[0] == ("taskkill", "/F", "/T", "/PID", "8888")

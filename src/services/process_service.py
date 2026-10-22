@@ -9,7 +9,7 @@ import os
 import signal
 import sys
 from datetime import datetime
-from typing import Awaitable, Callable, Dict, TextIO
+from typing import Awaitable, Callable, Dict, Set, TextIO
 
 from src.ai_handler import send_ntfy_notification
 from src.config import STATE_FILE
@@ -32,6 +32,7 @@ class ProcessService:
         self.task_names: Dict[int, str] = {}
         self.exit_watchers: Dict[int, asyncio.Task] = {}
         self.failure_guard = FailureGuard()
+        self._starting_task_ids: Set[int] = set()
         self._on_started: LifecycleHook | None = None
         self._on_stopped: LifecycleHook | None = None
 
@@ -133,8 +134,8 @@ class ProcessService:
     async def start_task(self, task_id: int, task_name: str) -> bool:
         """启动任务进程"""
         await self._drain_finished_process(task_id)
-        if self.is_running(task_id):
-            print(f"任务 '{task_name}' (ID: {task_id}) 已在运行中")
+        if self.is_running(task_id) or task_id in self._starting_task_ids:
+            print(f"任务 '{task_name}' (ID: {task_id}) 已在运行或启动中")
             return False
 
         decision = self.failure_guard.should_skip_start(
@@ -145,17 +146,22 @@ class ProcessService:
             await self._notify_skip(task_name, decision)
             return False
 
+        self._starting_task_ids.add(task_id)
         log_file_path = ""
         log_file_handle = None
         try:
             log_file_path, log_file_handle = self._open_log_file(task_id, task_name)
             process = await self._spawn_process(task_name, log_file_handle)
         except Exception as exc:
+            self._starting_task_ids.discard(task_id)
             self._close_log_handle(log_file_handle)
             print(f"启动任务 '{task_name}' 失败: {exc}")
             return False
 
-        self._register_runtime(task_id, task_name, process, log_file_path, log_file_handle)
+        try:
+            self._register_runtime(task_id, task_name, process, log_file_path, log_file_handle)
+        finally:
+            self._starting_task_ids.discard(task_id)
         print(f"启动任务 '{task_name}' (PID: {process.pid})")
         await self._invoke_hook(self._on_started, task_id)
         return True
@@ -251,6 +257,18 @@ class ProcessService:
             print(f"停止任务进程 (ID: {task_id}) 时出错: {exc}")
             return False
 
+    async def _kill_process_tree_windows(self, pid: int) -> None:
+        """在 Windows 下异步强制终结指定 PID 及其整棵子进程树 (包括 Playwright/Edge/Chromium)."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "taskkill", "/F", "/T", "/PID", str(pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except Exception as exc:
+            print(f"Windows 树形终止进程 {pid} 异常: {exc}")
+
     async def _terminate_process(
         self,
         process: asyncio.subprocess.Process,
@@ -258,23 +276,30 @@ class ProcessService:
     ) -> None:
         if sys.platform != "win32":
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=STOP_TIMEOUT_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                print(
+                    f"任务进程 {process.pid} (ID: {task_id}) 未在 "
+                    f"{STOP_TIMEOUT_SECONDS} 秒内退出，准备强制终止..."
+                )
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         else:
-            process.terminate()
+            # 在 Windows 下，直接使用 taskkill /F /T 终止整棵进程树，防止 Playwright 浏览器孤儿进程残留
+            await self._kill_process_tree_windows(process.pid)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=STOP_TIMEOUT_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                print(
+                    f"任务进程 {process.pid} (ID: {task_id}) 未在 "
+                    f"{STOP_TIMEOUT_SECONDS} 秒内退出，执行二次强制终止..."
+                )
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
 
-        try:
-            await asyncio.wait_for(process.wait(), timeout=STOP_TIMEOUT_SECONDS)
-            return
-        except asyncio.TimeoutError:
-            print(
-                f"任务进程 {process.pid} (ID: {task_id}) 未在 "
-                f"{STOP_TIMEOUT_SECONDS} 秒内退出，准备强制终止..."
-            )
-
-        if sys.platform != "win32":
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        else:
-            process.kill()
         await process.wait()
 
     async def _await_exit_watcher(self, task_id: int) -> None:
