@@ -27,13 +27,14 @@ export async function http(url: string, options: FetchOptions = {}) {
   const config: RequestInit = {
     ...options,
     headers,
+    credentials: 'same-origin',
   }
 
   const response = await fetch(fullUrl, config)
 
   if (response.status === 401) {
-    // Basic Auth failed or session expired
-    logout()
+    // Expired or revoked server session.
+    await logout()
     // Optional: Redirect to login handled by router or state change
     throw new Error('Unauthorized')
   }

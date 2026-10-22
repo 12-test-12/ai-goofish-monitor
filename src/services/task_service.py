@@ -28,12 +28,10 @@ class TaskService:
 
     async def update_task(self, task_id: int, task_update: TaskUpdate) -> Task:
         """更新任务"""
-        task = await self.repository.find_by_id(task_id)
-        if not task:
+        updated_task = await self.repository.update(task_id, task_update)
+        if not updated_task:
             raise ValueError(f"任务 {task_id} 不存在")
-
-        updated_task = task.apply_update(task_update)
-        return await self.repository.save(updated_task)
+        return updated_task
 
     async def delete_task(self, task_id: int) -> bool:
         """删除任务"""

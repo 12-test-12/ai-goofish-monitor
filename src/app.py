@@ -17,6 +17,7 @@ from src.api.routes import (
     login_state,
     websocket,
     accounts,
+    auth,
 )
 from src.api.dependencies import (
     set_process_service,
@@ -31,6 +32,8 @@ from src.services.task_generation_service import TaskGenerationService
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.config.settings import settings as app_settings
+from src.api.auth import WebAuthMiddleware
+from src.services.web_auth_service import WebAuthService
 
 
 # 全局服务实例
@@ -103,6 +106,9 @@ app = FastAPI(
 )
 
 # 注册路由
+app.state.web_auth_service = WebAuthService()
+app.add_middleware(WebAuthMiddleware, sessions=app.state.web_auth_service)
+app.include_router(auth.router)
 app.include_router(tasks.router)
 app.include_router(dashboard.router)
 app.include_router(logs.router)
@@ -132,21 +138,8 @@ async def health_check():
 
 
 # 认证状态检查端点
-from fastapi import Request, HTTPException
+from fastapi import Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/auth/status")
-async def auth_status(payload: LoginRequest):
-    """检查认证状态"""
-    if payload.username == app_settings.web_username and payload.password == app_settings.web_password:
-        return {"authenticated": True, "username": payload.username}
-    raise HTTPException(status_code=401, detail="认证失败")
 
 
 # 主页路由 - 服务 Vue 3 SPA

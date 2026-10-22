@@ -6,16 +6,12 @@ import re
 import sys
 import shutil
 import traceback
+import hashlib
+from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 
 import requests
-
-# 设置标准输出编码为UTF-8，解决Windows控制台编码问题
-if sys.platform.startswith('win'):
-    import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
 
 from src.config import (
     AI_DEBUG_MODE,
@@ -144,13 +140,23 @@ def _build_image_save_path(
     return os.path.join(task_image_dir, file_name)
 
 
+def _task_image_directory(task_key) -> Path:
+    """Only operate on a direct, non-linked child of the configured image root."""
+    root = Path(IMAGE_SAVE_DIR).resolve()
+    digest = hashlib.sha256(str(task_key).encode("utf-8")).hexdigest()
+    directory = root / f"{TASK_IMAGE_DIR_PREFIX}{digest}"
+    if directory.parent != root or directory.is_symlink() or directory.resolve() != directory:
+        raise ValueError("任务图片目录越界或指向链接，拒绝操作")
+    return directory
+
+
 async def download_all_images(product_id, image_urls, task_name="default", concurrency=None):
     """异步下载一个商品的所有图片。如果图片已存在则跳过。支持任务隔离。"""
     if not image_urls:
         return []
 
     # 为每个任务创建独立的图片目录
-    task_image_dir = os.path.join(IMAGE_SAVE_DIR, f"{TASK_IMAGE_DIR_PREFIX}{task_name}")
+    task_image_dir = str(_task_image_directory(task_name))
     os.makedirs(task_image_dir, exist_ok=True)
 
     urls = [url.strip() for url in image_urls if url.strip().startswith('http')]
@@ -198,7 +204,11 @@ async def download_all_images(product_id, image_urls, task_name="default", concu
 
 def cleanup_task_images(task_name):
     """清理指定任务的图片目录"""
-    task_image_dir = os.path.join(IMAGE_SAVE_DIR, f"{TASK_IMAGE_DIR_PREFIX}{task_name}")
+    try:
+        task_image_dir = str(_task_image_directory(task_name))
+    except (ValueError, OSError, RuntimeError) as exc:
+        safe_print(f"   [清理] 拒绝清理不安全的任务图片目录: {exc}")
+        return
     if os.path.exists(task_image_dir):
         try:
             shutil.rmtree(task_image_dir)

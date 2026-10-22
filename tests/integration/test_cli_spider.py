@@ -3,6 +3,7 @@ import importlib
 import json
 import sys
 import types
+import pytest
 
 
 def test_cli_runs_single_task_with_prompt(tmp_path, load_json_fixture, monkeypatch):
@@ -95,3 +96,38 @@ def test_cli_runs_keyword_mode_without_prompt_files(tmp_path, load_json_fixture,
     assert len(captured) == 1
     assert captured[0]["decision_mode"] == "keyword"
     assert captured[0]["ai_prompt_text"] == ""
+
+
+@pytest.mark.parametrize("selector", ["id", "ambiguous_name"])
+def test_cli_selects_id_and_refuses_ambiguous_names(tmp_path, monkeypatch, selector):
+    fake_scraper = types.ModuleType("src.scraper")
+    called = []
+
+    async def scrape(task_config, debug_limit):
+        called.append(task_config)
+        return 0
+
+    fake_scraper.scrape_xianyu = scrape
+    monkeypatch.setitem(sys.modules, "src.scraper", fake_scraper)
+    sys.modules.pop("spider_v2", None)
+    spider = importlib.import_module("spider_v2")
+    configs = [
+        {"id": 3, "task_name": "same", "keyword": "camera", "enabled": True, "decision_mode": "keyword"},
+        {"id": 9, "task_name": "same", "keyword": "phone", "enabled": True, "decision_mode": "keyword"},
+    ]
+    config = tmp_path / "tasks.json"
+    config.write_text(json.dumps(configs), encoding="utf-8")
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(spider, "STATE_FILE", str(state))
+    args = ["--task-id", "9"] if selector == "id" else ["--task-name", "same"]
+    monkeypatch.setattr(sys, "argv", ["spider_v2.py", "--config", str(config), *args])
+    if selector == "ambiguous_name":
+        with pytest.raises(SystemExit):
+            asyncio.run(spider.main())
+        assert called == []
+    else:
+        asyncio.run(spider.main())
+        assert len(called) == 1
+        assert called[0]["id"] == 9
+        assert called[0]["keyword"] == "phone"

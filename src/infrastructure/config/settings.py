@@ -103,6 +103,9 @@ class AppSettings(_EnvSettings):
     server_port: int = _env_field(8000, "SERVER_PORT")
     web_username: str = _env_field("admin", "WEB_USERNAME")
     web_password: str = _env_field("admin123", "WEB_PASSWORD")
+    web_session_ttl_seconds: int = _env_field(28800, "WEB_SESSION_TTL_SECONDS", ge=60)
+    web_cookie_secure: bool = _env_field(False, "WEB_COOKIE_SECURE")
+    web_allowed_origins: str = _env_field("", "WEB_ALLOWED_ORIGINS")
     task_log_retention_days: int = _env_field(7, "TASK_LOG_RETENTION_DAYS", ge=1)
 
     # 文件路径配置

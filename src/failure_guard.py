@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 import os
 import time
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from src.infrastructure.file_lock import FileLock
 
 
 try:
@@ -87,29 +89,6 @@ def _cookie_changed(
     return current > (previous_mtime + 1e-6)
 
 
-class _FileLock:
-    def __init__(self, fh):
-        self._fh = fh
-
-    def __enter__(self):
-        try:
-            import fcntl
-
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
-        except Exception:
-            pass
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        try:
-            import fcntl
-
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        return False
-
-
 def _ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
     if parent:
@@ -135,12 +114,17 @@ def _read_json_file(path: str) -> dict:
 
 def _atomic_write_json(path: str, data: dict) -> None:
     _ensure_parent_dir(path)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path) or ".", suffix=".tmp", delete=False) as f:
+            tmp = f.name
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.remove(tmp)
 
 
 @dataclass(frozen=True)
@@ -186,20 +170,33 @@ class FailureGuard:
     def _save(self, data: dict) -> None:
         _atomic_write_json(self.path, data)
 
-    def _update_task(self, task_key: str, updater) -> dict:
-        _ensure_parent_dir(self.path)
-        with open(self.path, "a+", encoding="utf-8") as fh:
-            with _FileLock(fh):
-                fh.seek(0)
+    def task_key(self, task_id: Optional[int], task_name: str) -> str:
+        if task_id is None:
+            return task_name
+        key = f"task-id:{task_id}"
+        snapshot = self._load().get("tasks", {})
+        # Preserve pre-upgrade pauses without coupling future failures of namesakes.
+        if key not in snapshot and task_name in snapshot:
+            with FileLock(f"{self.path}.lock"):
                 data = self._load()
                 tasks = data.setdefault("tasks", {})
-                entry = tasks.get(task_key) or {}
-                if not isinstance(entry, dict):
-                    entry = {}
-                entry = updater(entry) or entry
-                tasks[task_key] = entry
-                self._save(data)
-                return entry
+                if key not in tasks and isinstance(tasks.get(task_name), dict):
+                    tasks[key] = dict(tasks[task_name])
+                    self._save(data)
+        return key
+
+    def _update_task(self, task_key: str, updater) -> dict:
+        _ensure_parent_dir(self.path)
+        with FileLock(f"{self.path}.lock"):
+            data = self._load()
+            tasks = data.setdefault("tasks", {})
+            entry = tasks.get(task_key) or {}
+            if not isinstance(entry, dict):
+                entry = {}
+            entry = updater(entry) or entry
+            tasks[task_key] = entry
+            self._save(data)
+            return entry
 
     def record_success(self, task_key: str, *, now: Optional[datetime] = None) -> None:
         def _reset(_: dict) -> dict:

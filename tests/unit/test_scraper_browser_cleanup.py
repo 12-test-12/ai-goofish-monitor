@@ -10,6 +10,7 @@ from src import scraper
 
 @pytest.mark.parametrize("stage", ["new_context", "add_init_script", "new_page", "join"])
 def test_scraper_closes_browser_on_initialization_or_analysis_failure(monkeypatch, tmp_path, stage):
+    monkeypatch.setenv("APP_DATABASE_FILE", str(tmp_path / "app.sqlite3"))
     state_file = tmp_path / "state.json"
     state_file.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
     context = SimpleNamespace(add_init_script=AsyncMock(), new_page=AsyncMock())
@@ -52,7 +53,8 @@ def test_scraper_closes_browser_on_initialization_or_analysis_failure(monkeypatc
     browser.close.assert_awaited_once()
 
 
-def test_managed_browser_closes_on_cancellation():
+def test_managed_browser_closes_on_cancellation(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_DATABASE_FILE", str(tmp_path / "app.sqlite3"))
     async def scenario():
         browser = SimpleNamespace(close=AsyncMock())
         playwright = SimpleNamespace(chromium=SimpleNamespace(launch=AsyncMock(return_value=browser)))
@@ -73,7 +75,8 @@ def test_managed_browser_closes_on_cancellation():
     asyncio.run(scenario())
 
 
-def test_browser_close_error_preserves_original_failure():
+def test_browser_close_error_preserves_original_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_DATABASE_FILE", str(tmp_path / "app.sqlite3"))
     browser = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("close failed")))
     playwright = SimpleNamespace(chromium=SimpleNamespace(launch=AsyncMock(return_value=browser)))
 

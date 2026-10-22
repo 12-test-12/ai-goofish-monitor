@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from src.infrastructure.persistence.storage_names import build_result_filename
+from tests.live._support import load_runtime_env
 
 
 pytestmark = pytest.mark.live
@@ -25,6 +26,15 @@ FORBIDDEN_LOG_MARKERS = (
 def api_request(session: requests.Session, method: str, url: str, **kwargs) -> requests.Response:
     kwargs.setdefault("timeout", REQUEST_TIMEOUT_SECONDS)
     return session.request(method=method, url=url, **kwargs)
+
+
+def authenticate(session: requests.Session, server) -> None:
+    env = load_runtime_env(server.settings.repo_root)
+    response = api_request(session, "post", f"{server.base_url}/auth/status", json={
+        "username": env.get("WEB_USERNAME", "admin"),
+        "password": env.get("WEB_PASSWORD", "admin123"),
+    })
+    assert response.status_code == 200, "Web session authentication failed"
 
 def fetch_task(session: requests.Session, base_url: str, task_id: int) -> dict:
     response = api_request(session, "get", f"{base_url}/api/tasks/{task_id}")
@@ -136,6 +146,7 @@ def build_live_task_payload(account_state_file: Path, task_name: str, keyword: s
 
 def test_live_preflight_smoke(live_server):
     with requests.Session() as session:
+        authenticate(session, live_server)
         health_response = api_request(session, "get", f"{live_server.base_url}/health")
         assert health_response.status_code == 200, health_response.text
         assert health_response.json()["status"] == "healthy"
@@ -158,6 +169,7 @@ def test_live_real_traffic_task_smoke(live_server):
     payload = build_live_task_payload(live_server.account_state_file, task_name, keyword)
 
     with requests.Session() as session:
+        authenticate(session, live_server)
         create_response = api_request(
             session,
             "post",
@@ -229,6 +241,7 @@ def test_live_ai_task_generation_job(live_server):
     }
 
     with requests.Session() as session:
+        authenticate(session, live_server)
         response = api_request(
             session,
             "post",

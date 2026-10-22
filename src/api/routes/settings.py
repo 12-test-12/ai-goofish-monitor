@@ -2,6 +2,8 @@
 设置管理路由
 """
 import os
+import asyncio
+from urllib.parse import urlsplit
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -286,27 +288,58 @@ async def update_ai_settings(settings: AISettingsModel):
 
 
 @router.post("/ai/test")
-async def test_ai_settings(settings: dict):
-    """测试AI模型设置是否有效"""
+async def test_ai_settings(settings: AISettingsModel):
+    """Stored credentials may only be used with their configured destination."""
+    values = settings.model_dump(exclude_unset=True)
+    stored_url = env_manager.get_value("OPENAI_BASE_URL", "") or ""
+    base_url = values.get("OPENAI_BASE_URL") or stored_url
+
+    def destination(value):
+        try:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment
+            ):
+                raise ValueError("invalid URL")
+            return (
+                parsed.scheme, parsed.hostname.lower(),
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                parsed.path.rstrip("/"),
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="AI 服务地址必须是有效的 HTTP(S) 地址")
+
+    target = destination(base_url)
+    api_key = values.get("OPENAI_API_KEY") or ""
+    stored_proxy = env_manager.get_value("PROXY_URL", "") or ""
+    proxy_url = values.get("PROXY_URL", stored_proxy) or ""
+    if not api_key:
+        if not stored_url or target != destination(stored_url) or proxy_url != stored_proxy:
+            raise HTTPException(status_code=400, detail="自定义服务地址或代理时，请显式提供测试 API Key")
+        api_key = env_manager.get_value("OPENAI_API_KEY", "") or ""
+    if not api_key:
+        raise HTTPException(status_code=400, detail="请提供 API Key")
+    model_name = values.get("OPENAI_MODEL_NAME") or env_manager.get_value("OPENAI_MODEL_NAME", "")
+    return await asyncio.to_thread(_test_ai_connection, api_key, base_url, proxy_url, model_name)
+
+
+def _test_ai_connection(api_key: str, base_url: str, proxy_url: str, model_name: str):
+    transport = None
     try:
         from openai import OpenAI
         import httpx
 
-        stored_api_key = env_manager.get_value("OPENAI_API_KEY", "")
-        submitted_api_key = settings.get("OPENAI_API_KEY", "")
-        api_key = submitted_api_key or stored_api_key
-
         client_params = {
             "api_key": api_key,
-            "base_url": settings.get("OPENAI_BASE_URL", ""),
+            "base_url": base_url,
             "timeout": httpx.Timeout(30.0),
+            "max_retries": 0,
         }
-
-        proxy_url = settings.get("PROXY_URL", "")
-        if proxy_url:
-            client_params["http_client"] = httpx.Client(proxy=proxy_url)
-
-        model_name = settings.get("OPENAI_MODEL_NAME", "")
+        # The SDK's default client follows redirects; never forward credentials that way.
+        transport = httpx.Client(proxy=proxy_url or None, follow_redirects=False, trust_env=False)
+        client_params["http_client"] = transport
         client = OpenAI(**client_params)
         messages = [{"role": "user", "content": AI_TEST_PROMPT}]
         api_mode = CHAT_COMPLETIONS_API_MODE
@@ -345,5 +378,8 @@ async def test_ai_settings(settings: dict):
     except Exception as exc:
         return {
             "success": False,
-            "message": f"AI模型连接测试失败: {exc}",
+            "message": f"AI模型连接测试失败: {type(exc).__name__}",
         }
+    finally:
+        if transport is not None:
+            transport.close()

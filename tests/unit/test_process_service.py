@@ -35,6 +35,8 @@ def test_process_service_marks_task_stopped_when_process_exits(monkeypatch, tmp_
 
     async def run_scenario():
         service = ProcessService()
+        service.failure_guard.path = str(tmp_path / "guard.json")
+        monkeypatch.setattr(service, "_resolve_cookie_path", lambda _: None)
         service.failure_guard.should_skip_start = lambda *args, **kwargs: SimpleNamespace(
             skip=False,
             should_notify=False,
@@ -101,14 +103,14 @@ def test_process_service_adds_debug_limit_arg_when_env_enabled(monkeypatch):
     monkeypatch.setenv("SPIDER_DEBUG_LIMIT", "1")
     service = ProcessService()
 
-    command = service._build_spawn_command("task-a")
+    command = service._build_spawn_command(7)
 
     assert command == [
         sys.executable,
         "-u",
         "spider_v2.py",
-        "--task-name",
-        "task-a",
+        "--task-id",
+        "7",
         "--debug-limit",
         "1",
     ]
@@ -157,8 +159,9 @@ def test_process_service_kill_process_tree_executes_taskkill_command(monkeypatch
 
 
 @pytest.fixture()
-def startable_service(monkeypatch):
+def startable_service(monkeypatch, tmp_path):
     service = ProcessService()
+    service.failure_guard.path = str(tmp_path / "guard.json")
     monkeypatch.setattr(service.failure_guard, "should_skip_start", lambda *a, **kw: SimpleNamespace(skip=False))
     monkeypatch.setattr(service, "_resolve_cookie_path", lambda _: None)
     monkeypatch.setattr(service, "_open_log_file", lambda *a: ("", io.StringIO()))

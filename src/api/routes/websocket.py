@@ -4,6 +4,7 @@ WebSocket 路由
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Set
+from src.services.web_auth_service import SESSION_COOKIE
 
 
 router = APIRouter()
@@ -24,16 +25,21 @@ async def websocket_endpoint(
     try:
         # 保持连接并接收消息
         while True:
+            if websocket.app.state.web_auth_service.validate(websocket.cookies.get(SESSION_COOKIE)) is None:
+                await websocket.close(code=4401)
+                break
             # 接收客户端消息（如果有的话）
             data = await websocket.receive_text()
             # 这里可以处理客户端发送的消息
             # 目前我们主要用于服务端推送，所以暂时不处理
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
+        pass
     except Exception as e:
         print(f"WebSocket 错误: {e}")
         if websocket in active_connections:
             active_connections.remove(websocket)
+    finally:
+        active_connections.discard(websocket)
 
 
 async def broadcast_message(message_type: str, data: dict):
@@ -46,8 +52,12 @@ async def broadcast_message(message_type: str, data: dict):
     # 移除已断开的连接
     disconnected = set()
 
-    for connection in active_connections:
+    for connection in tuple(active_connections):
         try:
+            if connection.app.state.web_auth_service.validate(connection.cookies.get(SESSION_COOKIE)) is None:
+                await connection.close(code=4401)
+                disconnected.add(connection)
+                continue
             await connection.send_json(message)
         except Exception:
             disconnected.add(connection)

@@ -6,14 +6,7 @@ class WebSocketService {
   private listeners: Map<string, WebSocketEventHandler[]> = new Map();
   public isConnected = false;
   private shouldConnect = false;
-
-  constructor() {
-    // 延迟连接，等待认证完成
-    // 只有在已登录时才尝试连接
-    if (localStorage.getItem('auth_logged_in') === 'true') {
-      this.connect();
-    }
-  }
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   public start() {
     // 手动启动 WebSocket 连接
@@ -26,6 +19,8 @@ class WebSocketService {
   public stop() {
     // 停止 WebSocket 连接
     this.shouldConnect = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -33,6 +28,7 @@ class WebSocketService {
   }
 
   private connect() {
+    if (!this.shouldConnect) return;
     // Determine the protocol (ws or wss) based on the current page protocol
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host; // This includes port if present
@@ -60,15 +56,15 @@ class WebSocketService {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       if (this.isConnected) {
         console.log('WebSocket disconnected');
         this.isConnected = false;
         this.emit('disconnected', { isConnected: false });
       }
-      // 只有在 shouldConnect 为 true 或已登录时才重连
-      if (this.shouldConnect || localStorage.getItem('auth_logged_in') === 'true') {
-        setTimeout(() => this.connect(), this.reconnectInterval);
+      if (event.code === 4401 || event.code === 4403) this.shouldConnect = false;
+      if (this.shouldConnect) {
+        this.reconnectTimer = setTimeout(() => this.connect(), this.reconnectInterval);
       }
     };
 

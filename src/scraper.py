@@ -60,6 +60,7 @@ from src.services.price_history_service import (
 )
 from src.services.result_storage_service import load_processed_link_keys
 from src.services.seller_profile_cache import SellerProfileCache
+from src.services.browser_pool import browser_slot
 from src.services.search_pagination import (
     advance_search_page,
     is_search_results_response,
@@ -81,15 +82,16 @@ EDGE_DOCKER_WARNING_PRINTED = False
 @asynccontextmanager
 async def _managed_scrape_browser(playwright, launch_kwargs):
     """从浏览器启动成功起保护资源，覆盖上下文初始化和分析收尾异常。"""
-    browser = await playwright.chromium.launch(**launch_kwargs)
-    try:
-        yield browser
-    finally:
+    async with browser_slot():
+        browser = await playwright.chromium.launch(**launch_kwargs)
         try:
-            log_time("任务执行完毕，正在关闭浏览器释放内存资源...")
-            await browser.close()
-        except Exception as close_err:
-            log_time(f"关闭浏览器时出现非致命异常: {close_err}")
+            yield browser
+        finally:
+            try:
+                log_time("任务执行完毕，正在关闭浏览器释放内存资源...")
+                await browser.close()
+            except Exception as close_err:
+                log_time(f"关闭浏览器时出现非致命异常: {close_err}")
 
 
 def _is_login_url(url: str) -> bool:
@@ -177,11 +179,14 @@ async def _notify_task_failure(
         for marker in (
             "未找到可用的代理地址",
             "未找到可用的登录状态文件",
+            "FAIL_SYS_USER_VALIDATE",
+            "baxia-dialog",
+            "J_MIDDLEWARE_FRAME_WIDGET",
         )
     )
 
     guard_result = FAILURE_GUARD.record_failure(
-        task_name,
+        FAILURE_GUARD.task_key(task_config.get("id"), task_name),
         formatted_reason,
         cookie_path=cookie_path,
         min_failures_to_pause=1 if pause_immediately else None,
@@ -524,6 +529,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     根据单个任务配置，异步爬取闲鱼商品数据，并对每个新发现的商品进行实时的、独立的AI分析和通知。
     """
     keyword = task_config["keyword"]
+    image_task_key = f"task-id:{task_config['id']}" if task_config.get("id") is not None else task_config.get("task_name", "default")
     max_pages = task_config.get("max_pages", 1)
     personal_only = task_config.get("personal_only", False)
     min_price = task_config.get("min_price")
@@ -671,7 +677,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     str(user_id),
                     lambda seller_key: scrape_user_profile(context, seller_key),
                 ),
-                image_downloader=download_all_images,
+                image_downloader=lambda product_id, urls, _name: download_all_images(product_id, urls, image_task_key),
                 ai_analyzer=get_ai_analysis,
                 notifier=send_ntfy_notification,
                 saver=save_to_jsonl,
@@ -1070,12 +1076,6 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                     print(
                                         "检测到闲鱼反爬虫验证 (FAIL_SYS_USER_VALIDATE)，程序将终止。"
                                     )
-                                    long_sleep_duration = random.randint(3, 60)
-                                    print(
-                                        f"为避免账户风险，将执行一次长时间休眠 ({long_sleep_duration} 秒) 后再退出..."
-                                    )
-                                    await asyncio.sleep(long_sleep_duration)
-                                    print("长时间休眠结束，现在将安全退出。")
                                     print(
                                         "==================================================================="
                                     )
@@ -1198,14 +1198,20 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                         "----------------------------------------------------"
                                     )
 
+                        except (RiskControlError, LoginRequiredError):
+                            stop_scraping = True
+                            raise
                         except PlaywrightTimeoutError:
                             print(f"   错误: 访问商品详情页或等待API响应超时。")
                         except Exception as e:
                             print(f"   错误: 处理商品详情时发生未知错误: {e}")
                         finally:
-                            await detail_page.close()
-                            # --- 修改: 增加关闭页面后的短暂整理时间 ---
-                            await random_sleep(2, 4)  # 原来是 (1, 2.5)
+                            try:
+                                await detail_page.close()
+                            except Exception as close_err:
+                                log_time(f"关闭商品详情页失败: {close_err}")
+                            if not stop_scraping:
+                                await random_sleep(2, 4)
 
                     # --- 新增: 在处理完一页所有商品后，翻页前，增加一个更长的“休息”时间 ---
                     if not stop_scraping and page_num < max_pages:
@@ -1221,8 +1227,14 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     ) from e
                 print(f"\n操作超时错误: 页面元素或网络响应未在规定时间内出现。\n{e}")
                 raise
+            except (RiskControlError, LoginRequiredError):
+                if analysis_dispatcher is not None:
+                    await analysis_dispatcher.cancel()
+                raise
             except asyncio.CancelledError:
                 log_time("收到取消信号，正在终止当前爬虫任务...")
+                if analysis_dispatcher is not None:
+                    await analysis_dispatcher.cancel()
                 raise
             except Exception as e:
                 if type(e).__name__ == "TargetClosedError":
@@ -1262,7 +1274,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         pause_cookie_path = STATE_FILE
 
     decision = FAILURE_GUARD.should_skip_start(
-        task_name_for_guard, cookie_path=pause_cookie_path
+        FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard), cookie_path=pause_cookie_path
     )
     if decision.skip:
         print(
@@ -1285,7 +1297,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             except Exception as e:
                 print(f"发送任务暂停通知失败: {e}")
 
-        cleanup_task_images(task_config.get("task_name", "default"))
+        cleanup_task_images(image_task_key)
         return 0
 
     for attempt in range(1, attempt_limit + 1):
@@ -1330,7 +1342,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         try:
             processed_item_count += await _run_scrape_attempt(state_path, proxy_server)
             last_error = ""
-            FAILURE_GUARD.record_success(task_name_for_guard)
+            FAILURE_GUARD.record_success(FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard))
             break
         except LoginRequiredError as e:
             last_error = str(e)
@@ -1351,6 +1363,6 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         await _notify_task_failure(task_config, last_error, cookie_path=last_state_path)
 
     # 清理任务图片目录
-    cleanup_task_images(task_config.get("task_name", "default"))
+    cleanup_task_images(image_task_key)
 
     return processed_item_count

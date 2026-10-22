@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+import json
 
 from src.failure_guard import FailureGuard
 
@@ -74,3 +76,26 @@ def test_failure_guard_auto_recovers_on_cookie_change(tmp_path):
         now=base + timedelta(minutes=1),
     )
     assert recovered.skip is False
+
+
+def test_failure_guard_serializes_writers_and_keeps_valid_json(tmp_path):
+    path = tmp_path / "guard.json"
+
+    def record(_):
+        guard = FailureGuard(path=str(path), threshold=99)
+        guard.record_failure("shared-task", "test failure")
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(record, range(12)))
+    state = json.loads(path.read_text(encoding="utf-8"))
+    assert state["tasks"]["shared-task"]["consecutive_failures"] == 12
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_legacy_pause_survives_id_upgrade_without_being_reapplied_after_recovery(tmp_path):
+    guard = FailureGuard(path=str(tmp_path / "guard.json"), threshold=1)
+    guard.record_failure("legacy-name", "old failure")
+    key = guard.task_key(7, "legacy-name")
+    assert guard.should_skip_start(key).skip is True
+    guard.record_success(key)
+    assert guard.should_skip_start(guard.task_key(7, "legacy-name")).skip is False

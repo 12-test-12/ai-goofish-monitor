@@ -64,15 +64,16 @@ def _extract_keywords_from_legacy_groups(groups) -> List[str]:
     return _normalize_keyword_values(merged)
 
 
-def _normalize_payload_keywords(payload: Any) -> Any:
+def _normalize_payload_keywords(payload: Any, *, partial: bool = False) -> Any:
     if payload is None or not isinstance(payload, dict):
         return payload
     values = dict(payload)
-    values["account_state_file"] = clean_account_state_file(values.get("account_state_file"))
-    values["account_strategy"] = normalize_account_strategy(
-        values.get("account_strategy"),
-        values.get("account_state_file"),
-    )
+    if not partial or "account_state_file" in values:
+        values["account_state_file"] = clean_account_state_file(values.get("account_state_file"))
+    if not partial or "account_strategy" in values:
+        values["account_strategy"] = normalize_account_strategy(
+            values.get("account_strategy"), values.get("account_state_file"),
+        )
     if "keyword_rules" in values:
         values["keyword_rules"] = _normalize_keyword_values(values.get("keyword_rules"))
     elif "keyword_rule_groups" in values:
@@ -251,7 +252,7 @@ class TaskUpdate(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_legacy_keyword_payload(cls, values):
-        return _normalize_payload_keywords(values)
+        return _normalize_payload_keywords(values, partial=True)
 
     @field_validator("min_price", "max_price", mode="before")
     @classmethod

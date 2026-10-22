@@ -6,7 +6,7 @@ from typing import List, Optional
 from abc import ABC, abstractmethod
 import json
 import aiofiles
-from src.domain.models.task import Task
+from src.domain.models.task import Task, TaskUpdate
 
 
 class TaskRepository(ABC):
@@ -26,6 +26,11 @@ class TaskRepository(ABC):
     async def save(self, task: Task) -> Task:
         """保存任务（创建或更新）"""
         pass
+
+    async def update(self, task_id: int, changes: TaskUpdate) -> Optional[Task]:
+        """Legacy repositories may use read/merge/save; SQLite overrides atomically."""
+        task = await self.find_by_id(task_id)
+        return await self.save(task.apply_update(changes)) if task else None
 
     @abstractmethod
     async def delete(self, task_id: int) -> bool:

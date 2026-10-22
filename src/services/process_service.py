@@ -14,7 +14,7 @@ from typing import Awaitable, Callable, Dict, Set, TextIO
 from src.ai_handler import send_ntfy_notification
 from src.config import STATE_FILE
 from src.failure_guard import FailureGuard
-from src.infrastructure.persistence.sqlite_task_repository import find_task_by_name_sync
+from src.infrastructure.persistence.sqlite_task_repository import find_task_by_id_sync
 from src.utils import build_task_log_path
 
 STOP_TIMEOUT_SECONDS = 20
@@ -52,10 +52,10 @@ class ProcessService:
         if asyncio.iscoroutine(result):
             await result
 
-    def _resolve_cookie_path(self, task_name: str) -> str | None:
+    def _resolve_cookie_path(self, task_id: int) -> str | None:
         """Best-effort cookie/state path for a task."""
         try:
-            task = find_task_by_name_sync(task_name)
+            task = find_task_by_id_sync(task_id)
             if task and isinstance(task.account_state_file, str) and task.account_state_file.strip():
                 return task.account_state_file.strip()
         except Exception:
@@ -87,13 +87,13 @@ class ProcessService:
         log_file_handle = open(log_file_path, "a", encoding="utf-8")
         return log_file_path, log_file_handle
 
-    def _build_spawn_command(self, task_name: str) -> list[str]:
+    def _build_spawn_command(self, task_id: int) -> list[str]:
         command = [
             sys.executable,
             "-u",
             "spider_v2.py",
-            "--task-name",
-            task_name,
+            "--task-id",
+            str(task_id),
         ]
         debug_limit = str(os.getenv(SPIDER_DEBUG_LIMIT_ENV, "")).strip()
         if debug_limit.isdigit() and int(debug_limit) > 0:
@@ -102,6 +102,7 @@ class ProcessService:
 
     async def _spawn_process(
         self,
+        task_id: int,
         task_name: str,
         log_file_handle: TextIO,
     ) -> asyncio.subprocess.Process:
@@ -110,7 +111,7 @@ class ProcessService:
         child_env["PYTHONIOENCODING"] = "utf-8"
         child_env["PYTHONUTF8"] = "1"
         return await asyncio.create_subprocess_exec(
-            *self._build_spawn_command(task_name),
+            *self._build_spawn_command(task_id),
             stdout=log_file_handle,
             stderr=log_file_handle,
             preexec_fn=preexec_fn,
@@ -139,8 +140,8 @@ class ProcessService:
             return False
 
         decision = self.failure_guard.should_skip_start(
-            task_name,
-            cookie_path=self._resolve_cookie_path(task_name),
+            self.failure_guard.task_key(task_id, task_name),
+            cookie_path=self._resolve_cookie_path(task_id),
         )
         if decision.skip:
             await self._notify_skip(task_name, decision)
@@ -152,7 +153,7 @@ class ProcessService:
         try:
             log_file_path, log_file_handle = self._open_log_file(task_id, task_name)
             # 子进程创建不能随请求取消，否则可能丢失已经创建的进程句柄。
-            spawn_task = asyncio.create_task(self._spawn_process(task_name, log_file_handle))
+            spawn_task = asyncio.create_task(self._spawn_process(task_id, task_name, log_file_handle))
             process = await asyncio.shield(spawn_task)
             self._register_runtime(task_id, task_name, process, log_file_path, log_file_handle)
         except asyncio.CancelledError:

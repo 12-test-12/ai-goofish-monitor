@@ -161,6 +161,7 @@ def build_server_env(workspace: Path, repo_root: Path, port: int) -> dict[str, s
     env.update(
         {
             "APP_DATABASE_FILE": str(workspace / "data" / "live.sqlite3"),
+            "WEB_COOKIE_SECURE": "false",  # The isolated smoke server listens on loopback HTTP.
             "ACCOUNT_STATE_DIR": str(workspace / "state"),
             "RUN_HEADLESS": "true",
             "SKIP_AI_ANALYSIS": "false",

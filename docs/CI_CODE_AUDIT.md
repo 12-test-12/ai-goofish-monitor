@@ -76,7 +76,7 @@ npm run build
 python scripts/ci/check_codeql.py reports/codeql --min-score 7.0
 ```
 
-Windows 当前标准输出初始化与 pytest 捕获不兼容时，使用 `pytest -s`。现有 `FailureGuard` 测试还受 Windows 打开文件时无法原子替换的行为影响；CI 使用 Linux，不跳过这些用例。
+Windows 已移除模块导入时的标准输出 `detach()`，并将熔断状态锁迁移到独立锁文件；常规 `pytest` 可直接运行，CI 不跳过这些用例。
 
 Python 运行时依赖目前未锁版本，pip-audit 检查本次解析的版本，不能证明后来重新安装的依赖仍是同一版本；要保证部署依赖完全可复现，还需单独引入依赖锁定。静态审计与依赖库也不能替代业务权限检查或真实浏览器任务验证。
 

@@ -30,7 +30,9 @@ async def main():
     )
     parser.add_argument("--debug-limit", type=int, default=0, help="调试模式：每个任务仅处理前 N 个新商品（0 表示无限制）")
     parser.add_argument("--config", type=str, help="指定任务配置文件路径（传入时优先读取 JSON）")
-    parser.add_argument("--task-name", type=str, help="只运行指定名称的单个任务 (用于定时任务调度)")
+    selector = parser.add_mutually_exclusive_group()
+    selector.add_argument("--task-name", type=str, help="按唯一名称运行单个任务（重名时请使用 --task-id）")
+    selector.add_argument("--task-id", type=int, help="运行指定 ID 的单个任务")
     args = parser.parse_args()
 
     if args.config:
@@ -45,6 +47,11 @@ async def main():
         repository = SqliteTaskRepository()
         tasks = await repository.find_all()
         tasks_config = [task.dict() for task in tasks]
+
+    # Legacy JSON configurations used list positions as task IDs during migration.
+    for index, task in enumerate(tasks_config):
+        if task.get("id") is None:
+            task["id"] = index
 
     def normalize_keywords(value):
         if value is None:
@@ -158,9 +165,18 @@ async def main():
     print("--------------------")
 
     active_task_configs = []
-    if args.task_name:
+    if args.task_id is not None:
+        matches = [task for task in tasks_config if task.get("id") == args.task_id]
+        if len(matches) != 1:
+            parser.error(f"未找到唯一的任务 ID: {args.task_id}")
+        if matches[0].get("enabled", False):
+            active_task_configs = matches
+    elif args.task_name:
         # 如果指定了任务名称，只查找该任务
-        task_found = next((task for task in tasks_config if task.get('task_name') == args.task_name), None)
+        matches = [task for task in tasks_config if task.get('task_name') == args.task_name]
+        if len(matches) > 1:
+            parser.error("任务名称重复，请使用 --task-id")
+        task_found = matches[0] if matches else None
         if task_found:
             if task_found.get("enabled", False):
                 active_task_configs.append(task_found)
