@@ -81,6 +81,24 @@ def check(executable: Path, workspace: Path, *, native=False, report=None) -> No
                     assert response.status == 200
                 with client.open(base + "/api/tasks", timeout=5) as response:
                     assert response.status == 200
+                # Verify the frozen app contains the new QR routes, without
+                # contacting Goofish or creating any real login sessions.
+                invalid_login = urllib.request.Request(base + "/api/accounts/qr-login",
+                    data=json.dumps({"name": "../invalid"}).encode(),
+                    headers={"Content-Type": "application/json"})
+                try:
+                    client.open(invalid_login, timeout=5)
+                except urllib.error.HTTPError as error:
+                    assert error.code == 400
+                else:
+                    raise AssertionError("Packaged QR login route did not validate account names")
+                try:
+                    client.open(base + "/api/accounts/qr-login/smoke-missing", timeout=5)
+                except urllib.error.HTTPError as error:
+                    assert error.code == 404
+                    assert "扫码会话" in json.load(error)["detail"]
+                else:
+                    raise AssertionError("Packaged QR session route is missing")
                 assert (data / "data/app.sqlite3").is_file()
             finally:
                 if os.name == "nt":
@@ -99,6 +117,7 @@ def check(executable: Path, workspace: Path, *, native=False, report=None) -> No
                 raise RuntimeError("Native desktop failed: " + diagnostic)
             payload = json.loads(report.read_text(encoding="utf-8"))
             assert payload["native_window"] and payload["tray_hide_restore"] and payload["icon_loaded"]
+            assert payload["account_qr_dialog"], "Packaged account dialog does not expose QR login"
             # Exiting through the tray must also stop the embedded server.
             try:
                 urllib.request.urlopen(payload["url"] + "/health", timeout=1)
@@ -106,7 +125,8 @@ def check(executable: Path, workspace: Path, *, native=False, report=None) -> No
                 pass
             else:
                 raise AssertionError("Native desktop left its HTTP server running")
-    print("Desktop smoke passed: worker dispatch, persistent data, packaged SPA/assets, health and API authentication")
+    print("Desktop smoke passed: worker dispatch, persistent data, packaged SPA/assets, health, API authentication and QR routes"
+          + (", native window, tray and QR account dialog" if native else ""))
 
 
 if __name__ == "__main__":

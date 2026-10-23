@@ -37,6 +37,14 @@ def run_probe(window, tray, url, report: Path):
     tray.show()
     _wait(lambda: window.native.Visible, "托盘恢复")
 
+    # Exercise the bundled AccountsView without requesting an external QR code.
+    window.load_url(url + "/accounts?desktop=1")
+    _wait(lambda: window.evaluate_js("Array.from(document.querySelectorAll('button')).some(b => /添加账号|Add Account/.test(b.textContent))"), "账号管理")
+    window.evaluate_js("Array.from(document.querySelectorAll('button')).find(b => /添加账号|Add Account/.test(b.textContent)).click()")
+    _wait(lambda: window.evaluate_js("document.querySelector('#new-account-name') !== null"), "添加账号")
+    assert window.evaluate_js("Array.from(document.querySelectorAll('[role=dialog] button')).some(b => /生成登录二维码|Generate Login QR Code/.test(b.textContent))"), "QR sign-in is not the default account dialog"
+    assert window.evaluate_js("document.querySelector('[role=dialog] textarea') === null"), "Account dialog still defaults to JSON import"
+
     # Capture only the app's WebView surface, without capturing the user's desktop.
     from System import Action
     from System.IO import File, FileMode
@@ -49,7 +57,7 @@ def run_probe(window, tray, url, report: Path):
         capture["task"] = window.native.webview.CoreWebView2.CapturePreviewAsync(
             CoreWebView2CapturePreviewImageFormat.Png, capture["stream"])
 
-    # Allow the first rendered dashboard frame and charts to settle.
+    # Allow the account dialog's opening animation to settle.
     time.sleep(1)
     window.native.Invoke(Action(start_capture))
     try:
@@ -59,4 +67,5 @@ def run_probe(window, tray, url, report: Path):
         capture["stream"].Dispose()
     report.write_text(json.dumps({"native_window": True, "login": True,
         "workspace": True, "tray_hide_restore": True, "icon_loaded": True,
+        "account_qr_dialog": True,
         "url": url, "screenshot": str(screenshot)}, ensure_ascii=False, indent=2), encoding="utf-8")

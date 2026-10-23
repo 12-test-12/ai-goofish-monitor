@@ -21,19 +21,38 @@ cd web-ui
 npm ci
 npm run build
 cd ..
+python scripts/ci/desktop_package.py record-frontend
 python -m PyInstaller --noconfirm --distpath audit/desktop/dist --workpath audit/desktop/build desktop.spec
 python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --report audit/desktop/gui.json
+python scripts/ci/desktop_package.py prepare
 ```
 
-打包只包含公开资源、默认提示词和 `.env.example`，不包含个人配置、密钥、登录状态或数据库。EXE 位于 `audit/desktop/dist/GoofishMonitor.exe`。
+打包只包含公开资源、默认提示词和 `.env.example`，不包含个人配置、密钥、登录状态或数据库。EXE 位于 `audit/desktop/dist/GoofishMonitor.exe`；可分发的文件整理到 `audit/desktop/package/`。整理脚本要求目标目录为空，重复构建时可通过 `--output` 指定新目录，避免混入旧文件。CI 默认使用当前 `GITHUB_SHA` 标识来源，本地运行默认标记为 `local`，可用 `--revision` 显式指定来源（记录前端和整理产物时应一致）。
 
 ## 自动化流水线
 
-`.github/workflows/docker-image.yml` 在推送 master/main、`v*` 标签、对应分支的 PR 和手动触发时执行。新增 Windows job 复用已通过构建的前端产物，在 Python 3.12 下运行离线测试、打包无控制台 EXE，并验证后台服务及真实桌面窗口、托盘和退出清理。
+`.github/workflows/docker-image.yml` 在推送 master/main、`v*` 标签、对应分支的 PR 和手动触发时执行。Windows job 复用同一次运行中已通过构建的前端产物，在 Python 3.12 下运行离线测试、打包无控制台 EXE，并验证后台服务及真实桌面窗口、托盘和退出清理。
 
-成功后可从该次 Actions 的 Artifacts 下载 `GoofishMonitor-Windows-x64`，包含 EXE、本文和 SHA256 校验文件；`windows-desktop-validation` 保存测试报告和原生界面截图。PR 也可获取构建产物，不需要发布权限；此流程不自动创建 GitHub Release。推送远程后才能在 GitHub 执行，本地修改不会自动触发远程流水线。
+完整打包顺序：
 
-## 本轮验证与界面
+1. Linux job 运行 `npm ci`、类型检查、Vite 构建和前端回归，然后记录 `frontend-build.json`，包含提交 SHA 与全部前端文件的 SHA256。
+2. Windows job 下载 `frontend-dist`，核对提交 SHA 和文件校验值；缺少、修改、额外文件或提交不匹配都会阻断打包。
+3. Windows 离线回归通过后，使用 `desktop.spec` 打包 EXE。
+4. 启动 EXE 验证 worker、HTTP 鉴权、扫码 API 路由、真实窗口及托盘；打开打包后的“添加账号”窗口，确认默认提供“生成登录二维码”，避免回退到旧 JSON 界面。这一步不访问闲鱼，也不要求手机扫码。
+5. 冒烟通过后，只将 EXE、`README.txt`、`build-info.json` 和 `SHA256SUMS.txt` 整理到上传目录；构建信息包含来源提交与前端构建标识。
+6. 上传 `GoofishMonitor-Windows-x64`，在 Windows job 的 Summary 展示下载链接；完整质量关卡通过后，按原有规则决定是否发布 Docker 镜像。
+
+下载方式：打开仓库 **Actions → CI, Desktop & Docker Build → 对应运行**，在 Artifacts 下载 `GoofishMonitor-Windows-x64` ZIP；也可使用 Windows job Summary 中的链接。解压后先从托盘退出旧版，再运行新的 EXE。构建包保留 30 天；`windows-desktop-validation` 保存测试报告和扫码入口截图，保留 14 天。
+
+PR 也会生成桌面构建产物，不需要发布权限。只需打包桌面版时，可以手动运行工作流并取消勾选 `publish_docker`，Windows 打包仍会执行。此流程不自动创建 GitHub Release。只有提交并推送到远程后，GitHub 才会执行更新后的流水线；本地修改不会触发远程运行。
+
+## 本次流水线验证（2026-10-23）
+
+37 项相关 Python 回归、2 项前端回归、工作流 YAML 解析及 Summary 步骤的 PowerShell 语法检查通过。已实际执行前端构建标识记录与校验、PyInstaller 打包、EXE 的 HTTP/原生窗口/扫码入口冒烟及下载目录整理。新版 EXE 约 71.7 MiB，归档检查确认包含前端构建清单，未包含个人根目录配置或账号目录。
+
+本地验证产物位于 `audit/desktop-pipeline-check/package/`，原生窗口报告与截图位于 `audit/desktop-pipeline-check/reports/`。这次验证不调用闲鱼或 AI 服务；远程 GitHub Actions 需要推送包含工作流和扫码功能的提交后再执行，本地通过不代表远程运行已经通过。
+
+## 已有验证记录与界面
 
 Windows / Python 3.12 的 319 项离线回归通过，3 项真实服务测试排除；前端类型检查、生产构建与 2 项前端回归通过。源代码原生窗口冒烟已验证登录、图标、托盘隐藏/恢复和退出时关闭后台服务。
 

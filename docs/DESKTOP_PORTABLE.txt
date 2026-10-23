@@ -5,6 +5,8 @@
 3. 单击托盘图标打开窗口；右键选择“退出并停止监控”彻底退出。
 4. 默认登录账号为 admin/admin123；如已修改，使用自己的账号密码。
 5. 账号、AI 和通知设置需在软件中配置，打包程序不包含个人账号或密钥。
+6. 添加闲鱼账号时选择“扫码登录”，填写名称并生成二维码，使用闲鱼 APP 扫码确认。
+   登录状态将自动保存；如二维码失效，可重新生成。也可以切换到“手动导入 JSON”。
 
 默认数据与日志：
 %LOCALAPPDATA%\GoofishMonitor
@@ -16,5 +18,6 @@ https://developer.microsoft.com/microsoft-edge/webview2/
 闲鱼抓取另需本机 Edge 或 Playwright 浏览器环境。当前为未签名的便携版，
 不包含自动更新或安装向导。升级前请从托盘退出旧版并保留数据目录。
 
-SHA256SUMS.txt 用于核对 EXE 完整性；PowerShell 可执行：
+build-info.json 记录本包来源提交、前端构建标识和构建时间，排查旧版本时请一并提供。
+SHA256SUMS.txt 用于核对 EXE、本文和构建信息的完整性；PowerShell 可执行：
 Get-FileHash .\GoofishMonitor.exe -Algorithm SHA256

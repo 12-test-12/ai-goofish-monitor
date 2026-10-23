@@ -103,12 +103,14 @@ jobs:
       - name: Run frontend security and toast regressions
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: node --test tests/frontend/ci-regressions.test.cjs
+      - name: Record frontend source revision and file checksums
+        run: python scripts/ci/desktop_package.py record-frontend
       - name: Upload frontend build dist artifact
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: dist/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
       - name: Upload frontend audit report
         if: always()
@@ -147,6 +149,8 @@ jobs:
         with:
           name: frontend-dist
           path: dist
+      - name: Verify frontend matches this source revision
+        run: python scripts/ci/desktop_package.py verify-frontend
       - name: Run Windows regressions
         run: |
           New-Item -ItemType Directory -Force reports | Out-Null
@@ -156,16 +160,30 @@ jobs:
       - name: Smoke test worker, HTTP server and native desktop
         run: python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --report reports/desktop-gui.json
       - name: Prepare portable download
-        run: |
-          Copy-Item docs/DESKTOP_PORTABLE.txt audit/desktop/dist/README.txt
-          Get-FileHash audit/desktop/dist/GoofishMonitor.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  GoofishMonitor.exe" } | Set-Content audit/desktop/dist/SHA256SUMS.txt
+        run: python scripts/ci/desktop_package.py prepare
       - name: Upload desktop package
+        id: desktop-package
         uses: actions/upload-artifact@v4
         with:
           name: GoofishMonitor-Windows-x64
-          path: audit/desktop/dist/
+          path: audit/desktop/package/
           if-no-files-found: error
           retention-days: 30
+      - name: Write desktop download summary
+        env:
+          DESKTOP_DOWNLOAD_URL: ${{ steps.desktop-package.outputs.artifact-url }}
+        run: |
+          @"
+          ## Windows desktop package
+
+          [Download GoofishMonitor-Windows-x64]($env:DESKTOP_DOWNLOAD_URL)
+
+          Source revision: $env:GITHUB_SHA
+
+          Includes GoofishMonitor.exe, README.txt, build-info.json and SHA256SUMS.txt.
+          The frontend revision and checksums, Windows regressions, HTTP API and native desktop smoke checks passed.
+          Extract the downloaded ZIP, exit the old app from the system tray, then start GoofishMonitor.exe.
+          "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
       - name: Upload Windows test and GUI evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,12 +1,12 @@
 # CI 代码审计与镜像发布
 
-入口：`.github/workflows/docker-image.yml`，Actions 名称为 **CI & Docker Build**。
+入口：`.github/workflows/docker-image.yml`，Actions 名称为 **CI, Desktop & Docker Build**。
 
 ## 触发与发布
 
-- 向 `master` / `main` 提交 PR：审计、测试和前端构建，并保存 `frontend-dist` 供非 Docker 用户下载。
+- 向 `master` / `main` 提交 PR：审计、测试、前端构建及 Windows EXE 打包，保存 `frontend-dist` 和 `GoofishMonitor-Windows-x64` 下载产物。
 - 推送到 `master` / `main` 或 `v*` 标签：重新检查实际提交，全部通过后发布 amd64/arm64 镜像。
-- 手动运行：始终执行检查，通过 `publish_docker` 选择是否发布镜像。
+- 手动运行：始终执行检查和 Windows 打包，通过 `publish_docker` 选择是否发布镜像。取消该选项仍可下载桌面版。
 - 不设置路径过滤，避免只改工作流或依赖时漏掉检查。同一 PR 的新运行取消旧运行；同一分支的发布运行串行执行。
 
 ```mermaid
@@ -16,11 +16,15 @@ flowchart TD
     A --> D[Python 依赖审计]
     A --> E[后端离线测试]
     A --> F[npm 审计与前端构建]
+    E --> W[Windows 回归 / 前端校验 / EXE 打包 / 窗口与扫码入口冒烟]
+    F --> W
+    W --> P[桌面下载产物 / 构建标识 / SHA256 / Summary 下载链接]
     B --> G[Quality gate]
     C --> G
     D --> G
     E --> G
     F --> G
+    W --> G
     G -->|全部成功且需要发布| H[构建并推送应用镜像]
 ```
 
@@ -34,10 +38,13 @@ flowchart TD
 | npm audit | `web-ui/package-lock.json`，包含开发与构建依赖 | high/critical 漏洞（下述精确例外除外），或审计请求失败 |
 | pytest | 除 `tests/audit` 外的测试，排除 live/live_slow | 任意用例失败或测试无法执行 |
 | Vue 构建 | 锁定依赖安装、TypeScript 检查、Vite 构建 | 任一步失败 |
+| Windows 打包 | 同提交前端校验、Windows 回归、PyInstaller、HTTP/原生窗口/扫码入口冒烟、产物整理 | 任一步失败；未通过冒烟不上传桌面下载包 |
 
 CodeQL 完成分析和上传告警本身不代表没有高危问题，因此额外执行 `scripts/ci/check_codeql.py` 读取 SARIF 并返回失败状态。关卡不使用漏洞基线自动放行，也不通过 `continue-on-error` 隐藏扫描失败。
 
 `Quality gate` 要求所有上游 job 都返回 success；failure、cancelled、skipped 均不允许发布。`publish-docker` 依赖此关卡，Docker 构建或发布失败也会如实显示失败。
+
+桌面产物的构建和上传依赖后端测试、前端构建及 Windows 自身检查；它在其他审计全部完成之前可能已经可下载，不能把“存在桌面 Artifact”等同于所有安全审计通过。使用前查看 Quality gate。打包步骤与下载方式详见 [桌面版文档](DESKTOP.md#自动化流水线)。
 
 ### 前端依赖例外（2026-10-22 审查）
 
