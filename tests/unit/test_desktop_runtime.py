@@ -5,9 +5,40 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 import desktop_launcher as launcher
 from src.services.process_service import ProcessService
 from src.services import maintenance_service
+
+
+def test_windowed_headless_startup_logs_errors_without_a_console(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(launcher, "BASE_DIR", tmp_path / "bundle")
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setenv("GOOFISH_DATA_DIR", str(tmp_path / "user"))
+    monkeypatch.setitem(sys.modules, "src.app", SimpleNamespace(app=object()))
+    monkeypatch.setattr(launcher.uvicorn, "Config", lambda *_args, **_kwargs: None)
+
+    def fail():
+        assert sys.stdout is not None and sys.stderr is not None
+        raise RuntimeError("synthetic windowed startup failure")
+
+    monkeypatch.setattr(launcher.uvicorn, "Server", lambda _config: SimpleNamespace(run=fail))
+    output = None
+    try:
+        with monkeypatch.context() as streams:
+            streams.setattr(sys, "frozen", True, raising=False)
+            streams.setattr(sys, "stdout", None)
+            streams.setattr(sys, "stderr", None)
+            with pytest.raises(SystemExit) as caught:
+                launcher.main(["--no-browser"])
+            assert caught.value.code == 1
+            output = sys.stdout
+    finally:
+        if output is not None:
+            output.close()
+    log = (tmp_path / "user/logs/desktop.log").read_text(encoding="utf-8")
+    assert "RuntimeError: synthetic windowed startup failure" in log
 
 
 def test_frozen_data_lives_outside_meipass_and_existing_settings_are_preserved(tmp_path, monkeypatch):

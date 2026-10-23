@@ -59,6 +59,7 @@ def _open_when_ready(server, url: str, stopped: threading.Event) -> None:
 def run_app(*, open_browser: bool = True) -> None:
     """启动 FastAPI 应用并自动打开浏览器"""
     _prepare_environment()
+    _configure_desktop_logging()
 
     from src.app import app
     from src.infrastructure.config.settings import settings
@@ -102,7 +103,12 @@ def main(argv=None) -> None:
         parser.add_argument("--smoke-report", type=Path, help=argparse.SUPPRESS)
         options = parser.parse_args(arguments)
         if options.no_browser or options.browser:
-            run_app(open_browser=options.browser and not options.no_browser)
+            try:
+                run_app(open_browser=options.browser and not options.no_browser)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                raise SystemExit(1)
         else:
             _prepare_environment()
             _configure_desktop_logging()
