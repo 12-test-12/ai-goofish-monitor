@@ -163,7 +163,7 @@ jobs:
         run: python -m PyInstaller --noconfirm --distpath audit/desktop/dist --workpath audit/desktop/build desktop.spec
       - name: Smoke test worker, HTTP server and native desktop
         timeout-minutes: 8
-        run: python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --report reports/desktop-gui.json --startup-timeout 120
+        run: python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --portable --report reports/desktop-gui.json --startup-timeout 120
       - name: Prepare portable download
         run: python scripts/ci/desktop_package.py prepare
       - name: Upload desktop package

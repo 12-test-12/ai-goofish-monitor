@@ -8,6 +8,11 @@ import pytest
 from scripts.ci import check_desktop_smoke as smoke
 
 
+def test_portable_smoke_requires_a_frozen_executable(tmp_path):
+    with pytest.raises(ValueError, match="packaged EXE"):
+        smoke.check(tmp_path / "app.py", tmp_path / "smoke", portable=True)
+
+
 def test_loopback_health_probe_bypasses_runner_proxies(tmp_path, monkeypatch):
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.setenv(key, "http://127.0.0.1:1")

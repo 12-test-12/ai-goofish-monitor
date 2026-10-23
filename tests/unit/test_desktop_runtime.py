@@ -41,7 +41,7 @@ def test_windowed_headless_startup_logs_errors_without_a_console(tmp_path, monke
     assert "RuntimeError: synthetic windowed startup failure" in log
 
 
-def test_frozen_data_lives_outside_meipass_and_existing_settings_are_preserved(tmp_path, monkeypatch):
+def test_frozen_explicit_data_directory_and_existing_settings_are_preserved(tmp_path, monkeypatch):
     bundle, user_data = tmp_path / "bundle", tmp_path / "user"
     (bundle / "prompts").mkdir(parents=True)
     (bundle / "prompts/base_prompt.txt").write_text("base", encoding="utf-8")
@@ -59,6 +59,52 @@ def test_frozen_data_lives_outside_meipass_and_existing_settings_are_preserved(t
     launcher._prepare_environment()
     assert (user_data / ".env").read_text(encoding="utf-8") == "USER_SETTING=keep"
     assert (bundle / ".env.example").exists()
+
+
+def test_frozen_default_data_lives_beside_executable_not_appdata_or_cwd(tmp_path, monkeypatch):
+    bundle = tmp_path / "extracted-resources"
+    portable = tmp_path / "portable app"
+    working = tmp_path / "shortcut-working-directory"
+    old_data = tmp_path / "appdata" / "GoofishMonitor"
+    for directory in (bundle / "prompts", portable, working, old_data):
+        directory.mkdir(parents=True)
+    (bundle / "prompts/base_prompt.txt").write_text("default", encoding="utf-8")
+    (bundle / ".env.example").write_text("DEFAULT=yes", encoding="utf-8")
+    (old_data / ".env").write_text("OLD_SETTING=keep", encoding="utf-8")
+    monkeypatch.chdir(working)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(portable / "GoofishMonitor.exe"))
+    monkeypatch.setattr(launcher, "BASE_DIR", bundle)
+    monkeypatch.setenv("LOCALAPPDATA", str(old_data.parent))
+    monkeypatch.setenv("GOOFISH_DATA_DIR", "")
+
+    launcher._prepare_environment()
+
+    assert Path.cwd() == portable
+    assert launcher.os.environ["GOOFISH_DATA_DIR"] == str(portable)
+    assert (portable / "prompts/base_prompt.txt").read_text(encoding="utf-8") == "default"
+    assert (portable / ".env").read_text(encoding="utf-8") == "DEFAULT=yes"
+    assert not (working / "static").exists()
+    assert not (bundle / "static").exists()
+    assert (old_data / ".env").read_text(encoding="utf-8") == "OLD_SETTING=keep"
+    (portable / ".env").write_text("USER_SETTING=keep", encoding="utf-8")
+    launcher._prepare_environment()
+    assert (portable / ".env").read_text(encoding="utf-8") == "USER_SETTING=keep"
+
+
+def test_source_default_data_stays_in_repository(tmp_path, monkeypatch):
+    repository = tmp_path / "repository"
+    working = tmp_path / "elsewhere"
+    working.mkdir()
+    monkeypatch.chdir(working)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setattr(launcher, "BASE_DIR", repository)
+    monkeypatch.setenv("GOOFISH_DATA_DIR", "")
+    launcher._prepare_environment()
+    assert Path.cwd() == repository
+    assert (repository / "static").is_dir()
 
 
 def test_frozen_spawn_uses_worker_dispatch_and_explicit_log_file(tmp_path, monkeypatch):

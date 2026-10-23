@@ -13,7 +13,8 @@ ZIP 包含 EXE、使用说明、构建信息和 SHA256 校验值。解压后运�
 ## 运行环境与数据
 
 - 支持 Windows 10/11 x64，界面使用 Microsoft Edge WebView2 Runtime。通常系统已有该组件；缺少时请从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装 Evergreen Runtime。它与抓取闲鱼所需的浏览器环境是两项独立要求。
-- 默认数据目录为 `%LOCALAPPDATA%\GoofishMonitor`，保留旧桌面版的配置、账号和结果；可用 `GOOFISH_DATA_DIR` 指定其他绝对目录。
+- 默认数据目录为 **EXE 所在文件夹**，不取决于启动快捷方式的工作目录。例如 EXE 位于 `D:\GoofishMonitor\`，则数据库为 `D:\GoofishMonitor\data\app.sqlite3`，配置、账号、图片、日志和界面缓存也保存在该文件夹下。请解压到可写目录运行，移动时一起移动整个文件夹；显式设置的 `GOOFISH_DATA_DIR` 环境变量仍可覆盖默认目录。
+- 旧版 `%LOCALAPPDATA%\GoofishMonitor` 中的数据不会自动迁移或删除。保留旧数据时，先从托盘退出旧版，再将旧目录中的 `.env`、`data/`、`state/`、`prompts/` 等所需文件复制到 EXE 所在文件夹，避免覆盖已有新版数据。
 - 桌面版只监听 `127.0.0.1`，自动预留空闲端口。同一数据目录只允许一个桌面实例，重复打开时请从托盘恢复现有窗口。登录鉴权继续保留。
 - 桌面日志位于数据目录的 `logs/desktop.log`；界面缓存位于 `desktop-profile/`，不要共享或提交该目录。不要在同一数据库上同时启动旧版和新版程序。
 - `--no-browser` 保留原来的纯本地服务模式；`--browser` 使用外部浏览器。普通 Web/Docker 入口保持不变。
@@ -29,7 +30,7 @@ npm run build
 cd ..
 python scripts/ci/desktop_package.py record-frontend
 python -m PyInstaller --noconfirm --distpath audit/desktop/dist --workpath audit/desktop/build desktop.spec
-python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --report audit/desktop/gui.json
+python scripts/ci/check_desktop_smoke.py audit/desktop/dist/GoofishMonitor.exe --native --portable --report audit/desktop/gui.json
 python scripts/ci/desktop_package.py prepare
 ```
 

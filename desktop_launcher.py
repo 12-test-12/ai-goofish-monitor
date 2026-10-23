@@ -25,7 +25,9 @@ def _prepare_environment() -> None:
     if configured:
         data_dir = Path(configured).expanduser().resolve()
     elif frozen:
-        data_dir = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "GoofishMonitor"
+        # Persistent data belongs beside the EXE, never in the one-file
+        # extraction directory (_MEIPASS) or the shortcut's working directory.
+        data_dir = Path(sys.executable).resolve().parent
     else:
         data_dir = BASE_DIR
     data_dir.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,8 @@ A Playwright and AI-powered multi-task real-time monitoring tool for Xianyu (闲
 
 Supports Windows 10/11 x64. Run the EXE to open the desktop app. The ZIP also includes instructions, build information and SHA256 checksums. Closing the window keeps monitoring active in the system tray; exit the old version from the tray before upgrading. See the [desktop guide (Chinese)](docs/DESKTOP.md) for setup and runtime requirements.
 
+Desktop data (database, settings, accounts, images, logs and UI cache) is stored **beside the EXE** by default. Use a writable folder and move the whole folder when relocating the app.
+
 ## Core Features
 
 - **Web Visual Management**: Task management, account management, AI criteria editing, run logs, results browsing

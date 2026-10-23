@@ -79,9 +79,11 @@ def _stop_process(process):
     process.wait(timeout=20)
 
 
-def check(executable: Path, workspace: Path, *, native=False, report=None, startup_timeout=120) -> None:
+def check(executable: Path, workspace: Path, *, native=False, report=None, startup_timeout=120, portable=False) -> None:
     if startup_timeout <= 0:
         raise ValueError("startup_timeout must be positive")
+    if portable and executable.suffix.lower() != ".exe":
+        raise ValueError("Portable smoke requires a packaged EXE")
     workspace.mkdir(parents=True, exist_ok=True)
     report = (report or workspace / "desktop-gui.json").resolve()
     diagnostics = report.with_name(report.stem + "-logs")
@@ -93,6 +95,14 @@ def check(executable: Path, workspace: Path, *, native=False, report=None, start
         env.update(GOOFISH_DATA_DIR=str(data), APP_DATABASE_FILE=str(data / "data/app.sqlite3"),
                    TASK_FAILURE_GUARD_PATH=str(data / "logs/guard.json"),
                    WEB_USERNAME="desktop-smoke", WEB_PASSWORD="smoke-only", WEB_COOKIE_SECURE="false")
+        if portable:
+            data.mkdir()
+            copied_executable = data / executable.name
+            shutil.copy2(executable, copied_executable)
+            executable = copied_executable
+            for key in ("GOOFISH_DATA_DIR", "APP_DATABASE_FILE", "TASK_FAILURE_GUARD_PATH"):
+                env.pop(key, None)
+            env["LOCALAPPDATA"] = str(root / "unused-appdata")
         worker_log = root / "worker.log"
         for attempt in range(2):
             result = subprocess.run(_command(executable, "--spider-worker", "--worker-log", str(worker_log), "--help"),
@@ -179,7 +189,14 @@ def check(executable: Path, workspace: Path, *, native=False, report=None, start
                 pass
             else:
                 raise AssertionError("Native desktop left its HTTP server running")
+        if portable:
+            assert (data / "logs/desktop.log").is_file()
+            assert not (root / "unused-appdata/GoofishMonitor").exists()
+            assert not (root / "data/app.sqlite3").exists()
+            if native:
+                assert (data / "desktop-profile").is_dir()
     print("Desktop smoke passed: worker dispatch, persistent data, packaged SPA/assets, health, API authentication and QR routes"
+          + (", default EXE-directory storage" if portable else "")
           + (", native window, tray and QR account dialog" if native else ""))
 
 
@@ -188,8 +205,9 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("--workspace", type=Path, default=Path("audit/desktop/smoke"))
     parser.add_argument("--native", action="store_true", help="Also launch the actual Windows window and exercise its tray")
+    parser.add_argument("--portable", action="store_true", help="Copy the EXE to isolated data and verify its default storage without overrides")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=120, help="Maximum server startup wait in seconds")
     args = parser.parse_args()
     check(args.executable.resolve(), args.workspace.resolve(), native=args.native, report=args.report,
-          startup_timeout=args.startup_timeout)
+          startup_timeout=args.startup_timeout, portable=args.portable)
