@@ -4,6 +4,12 @@
 
 关闭窗口会隐藏到系统托盘，监控和定时任务继续运行。单击托盘图标或选择“打开主窗口”恢复；选择“退出并停止监控”会关闭应用、停止调度和爬虫进程。若托盘未能初始化，关闭窗口会直接退出，避免程序隐藏后无法恢复。
 
+## 下载
+
+**[直接下载 EXE](https://github.com/12-test-12/ai-goofish-monitor/releases/latest/download/GoofishMonitor.exe)** · **[完整 ZIP 包](https://github.com/12-test-12/ai-goofish-monitor/releases/latest/download/GoofishMonitor-Windows-x64.zip)** · [全部 Releases](https://github.com/12-test-12/ai-goofish-monitor/releases)
+
+ZIP 包含 EXE、使用说明、构建信息和 SHA256 校验值。解压后运行 `GoofishMonitor.exe`；升级前先从托盘退出旧版。
+
 ## 运行环境与数据
 
 - 支持 Windows 10/11 x64，界面使用 Microsoft Edge WebView2 Runtime。通常系统已有该组件；缺少时请从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装 Evergreen Runtime。它与抓取闲鱼所需的浏览器环境是两项独立要求。
@@ -40,11 +46,12 @@ python scripts/ci/desktop_package.py prepare
 3. Windows 离线回归通过后，使用 `desktop.spec` 打包 EXE。
 4. 启动 EXE 验证 worker、HTTP 鉴权、扫码 API 路由、真实窗口及托盘；打开打包后的“添加账号”窗口，确认默认提供“生成登录二维码”，避免回退到旧 JSON 界面。这一步不访问闲鱼，也不要求手机扫码。
 5. 冒烟通过后，只将 EXE、`README.txt`、`build-info.json` 和 `SHA256SUMS.txt` 整理到上传目录；构建信息包含来源提交与前端构建标识。
-6. 上传 `GoofishMonitor-Windows-x64`，在 Windows job 的 Summary 展示下载链接；完整质量关卡通过后，按原有规则决定是否发布 Docker 镜像。
+6. 上传 `GoofishMonitor-Windows-x64`，在 Windows job 的 Summary 展示临时产物下载链接。
+7. master/main 或 `v*` 标签的构建通过完整质量关卡后，自动创建 GitHub Release，附上 EXE、完整 ZIP、使用说明、构建信息及校验文件，并设为最新版本。首页下载入口始终指向最新 Release；Docker 仍按原有规则独立发布。
 
-下载方式：打开仓库 **Actions → CI, Desktop & Docker Build → 对应运行**，在 Artifacts 下载 `GoofishMonitor-Windows-x64` ZIP；也可使用 Windows job Summary 中的链接。解压后先从托盘退出旧版，再运行新的 EXE。构建包保留 30 天；`windows-desktop-validation` 保存测试报告和扫码入口截图，保留 14 天。
+正式下载使用仓库首页或 Releases 的入口。测试 PR 构建时，可打开仓库 **Actions → CI, Desktop & Docker Build → 对应运行**，在 Artifacts 下载 `GoofishMonitor-Windows-x64` ZIP；也可使用 Windows job Summary 中的链接。Actions 构建包保留 30 天；Release 附件不受该期限限制。`windows-desktop-validation` 保存测试报告和扫码入口截图，保留 14 天。
 
-PR 也会生成桌面构建产物，不需要发布权限。只需打包桌面版时，可以手动运行工作流并取消勾选 `publish_docker`，Windows 打包仍会执行。此流程不自动创建 GitHub Release。只有提交并推送到远程后，GitHub 才会执行更新后的流水线；本地修改不会触发远程运行。
+PR 也会生成桌面构建产物，不发布 Release。只需发布桌面版时，可以在 master/main 手动运行工作流并取消勾选 `publish_docker`，桌面打包与 Release 发布仍会执行。分支构建的 Release 标签为 `desktop-<run_id>-<run_attempt>`，`v*` 构建使用原版本标签。只有提交并推送到远程后，GitHub 才会执行更新后的流水线；本地修改不会触发远程运行。
 
 ## 本次流水线验证（2026-10-23）
 

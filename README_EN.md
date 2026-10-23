@@ -4,6 +4,12 @@
 
 A Playwright and AI-powered multi-task real-time monitoring tool for Xianyu (闲鱼), featuring a complete web management interface.
 
+## Download for Windows
+
+**[Download EXE](https://github.com/12-test-12/ai-goofish-monitor/releases/latest/download/GoofishMonitor.exe)** · **[Download ZIP package](https://github.com/12-test-12/ai-goofish-monitor/releases/latest/download/GoofishMonitor-Windows-x64.zip)** · [All releases](https://github.com/12-test-12/ai-goofish-monitor/releases)
+
+Supports Windows 10/11 x64. Run the EXE to open the desktop app. The ZIP also includes instructions, build information and SHA256 checksums. Closing the window keeps monitoring active in the system tray; exit the old version from the tray before upgrading. See the [desktop guide (Chinese)](docs/DESKTOP.md) for setup and runtime requirements.
+
 ## Core Features
 
 - **Web Visual Management**: Task management, account management, AI criteria editing, run logs, results browsing

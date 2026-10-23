@@ -340,6 +340,53 @@ jobs:
               sys.exit(1)
           PY
 
+  publish-desktop:
+    name: Publish Windows desktop to Releases
+    needs: quality-gate
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified desktop package
+        uses: actions/download-artifact@v4
+        with:
+          name: GoofishMonitor-Windows-x64
+          path: package
+      - name: Verify and archive release assets
+        working-directory: package
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS.txt
+          zip GoofishMonitor-Windows-x64.zip GoofishMonitor.exe README.txt build-info.json SHA256SUMS.txt
+          sha256sum GoofishMonitor-Windows-x64.zip >> SHA256SUMS.txt
+      - name: Publish release with direct EXE and ZIP downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="desktop-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
+          cat > release-notes.md <<EOF
+          Windows 10/11 x64 桌面版。直接下载 GoofishMonitor.exe 运行，或下载 ZIP 解压后运行。
+          升级前请从系统托盘退出旧版。使用说明、构建信息及 SHA256 校验文件见附件。
+
+          Source revision: $GITHUB_SHA
+          Validation: backend and Windows regressions, frontend build, native desktop smoke tests and security audits passed.
+          Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+          gh release create "$tag" package/GoofishMonitor.exe package/GoofishMonitor-Windows-x64.zip \
+            package/README.txt package/build-info.json package/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "Windows 桌面版 · $tag" --notes-file release-notes.md --latest
+          echo "[Windows 桌面版下载]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag)" >> "$GITHUB_STEP_SUMMARY"
+
   publish-docker:
     name: Build & publish Docker image (Optional / For Docker Users)
     needs: quality-gate

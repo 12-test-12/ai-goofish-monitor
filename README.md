@@ -4,7 +4,11 @@
 
 基于 Playwright 和 AI 的闲鱼多任务实时监控，提供完整的 Web 管理界面。
 
-Windows 用户可使用[独立桌面版](docs/DESKTOP.md)：双击 EXE 打开软件窗口，关闭到托盘后继续监控。GitHub Actions 完成 Windows 构建后，可下载 `GoofishMonitor-Windows-x64` 产物。
+## Windows 桌面版下载
+
+**[直接下载 EXE](https://github.com/12-test-12/ai-goofish-monitor/releases/latest/download/GoofishMonitor.exe)** · **[下载完整 ZIP 包](https://github.com/12-test-12/ai-goofish-monitor/releases/latest/download/GoofishMonitor-Windows-x64.zip)** · [全部版本与更新说明](https://github.com/12-test-12/ai-goofish-monitor/releases)
+
+支持 Windows 10/11 x64。下载 EXE 后双击即可打开独立软件窗口；ZIP 包另附使用说明、构建信息和 SHA256 校验值。关闭窗口后会缩到托盘继续监控，升级前请从托盘退出旧版。首次使用及运行环境见[桌面版说明](docs/DESKTOP.md)。
 
 
 ## 核心特性
