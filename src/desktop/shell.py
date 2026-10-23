@@ -23,6 +23,14 @@ class DesktopTray:
     def show(self, *_):
         self.window.show()
         self.window.restore()
+        try:
+            if hasattr(self.window, "focus"):
+                self.window.focus()
+            elif getattr(self.window, "native", None):
+                self.window.native.Activate()
+                self.window.native.BringToFront()
+        except Exception:
+            pass
 
     def quit(self, *_):
         self.exiting.set()
@@ -35,33 +43,42 @@ class DesktopTray:
         return True
 
     def start(self):
-        import pystray
-        from PIL import Image
-        with Image.open(self.icon_path) as source:
-            image = source.copy()
-        self.icon = pystray.Icon("GoofishMonitor", image,
-            f"{APP_TITLE} · 关闭窗口后继续监控", menu=pystray.Menu(
-                pystray.MenuItem("打开主窗口", self.show, default=True),
-                pystray.MenuItem("退出并停止监控", self.quit),
-            ))
+        try:
+            import pystray
+            from PIL import Image
+            icon_file = Path(self.icon_path)
+            if icon_file.is_file():
+                with Image.open(icon_file) as source:
+                    image = source.copy()
+            else:
+                image = Image.new("RGBA", (64, 64), color=(37, 99, 235, 255))
+            self.icon = pystray.Icon("GoofishMonitor", image,
+                f"{APP_TITLE} · 关闭窗口后继续监控", menu=pystray.Menu(
+                    pystray.MenuItem("打开主窗口", self.show, default=True),
+                    pystray.MenuItem("退出并停止监控", self.quit),
+                ))
 
-        def setup(icon):
-            icon.visible = True
-            self.ready.set()
+            def setup(icon):
+                icon.visible = True
+                self.ready.set()
 
-        def run():
-            try:
-                self.icon.run(setup=setup)
-            except Exception:
-                import traceback
-                traceback.print_exc()
-            finally:
-                self.ready.clear()
+            def run():
+                try:
+                    self.icon.run(setup=setup)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    self.ready.clear()
 
-        self.thread = threading.Thread(target=run, name="desktop-tray", daemon=True)
-        self.thread.start()
-        # If the tray cannot start, closing the window must still allow an exit.
-        self.ready.wait(5)
+            self.thread = threading.Thread(target=run, name="desktop-tray", daemon=True)
+            self.thread.start()
+            # If the tray cannot start, closing the window must still allow an exit.
+            self.ready.wait(5)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self.ready.clear()
 
     def stop(self):
         self.exiting.set()
@@ -129,7 +146,11 @@ def _run_window(base_dir, *, smoke_report=None):
             probe_errors = []
 
             def on_ready():
-                tray.start()
+                try:
+                    tray.start()
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
                 if smoke_report:
                     from src.desktop.smoke_probe import run_probe
                     try:
@@ -139,9 +160,11 @@ def _run_window(base_dir, *, smoke_report=None):
                     finally:
                         tray.quit()
 
+            ico_file = base_dir / "assets/desktop/goofish.ico"
+            webview_icon = str(ico_file) if ico_file.is_file() else None
             webview.start(on_ready, gui="edgechromium", private_mode=False,
                 storage_path=str(Path("desktop-profile").resolve()),
-                icon=str(base_dir / "assets/desktop/goofish.ico"))
+                icon=webview_icon)
             if probe_errors:
                 raise RuntimeError("桌面界面冒烟失败") from probe_errors[0]
         finally:

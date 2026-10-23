@@ -401,24 +401,24 @@ def iter_result_batches(filename: str, *, ai_recommended_only=False, keyword_rec
     """Consume in a single worker thread, keeping one stable read snapshot."""
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        conn.execute("BEGIN")
-        where, params, keywords = _query_scope(conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden)
-        cursor = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order)}", params)
-        while rows := cursor.fetchmany(batch_size):
-            yield [_decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) for row in rows]
+        try:
+            conn.execute("BEGIN")
+            where, params, keywords = _query_scope(conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden)
+            cursor = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order)}", params)
+            while rows := cursor.fetchmany(batch_size):
+                yield [_decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) for row in rows]
+        finally:
+            conn.rollback()
 
 
 def write_result_ndjson(filename: str, output) -> None:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
         cursor = conn.execute(f"SELECT raw_json FROM result_items WHERE result_filename = ? AND ({VALID_RECORD_SQL}) ORDER BY id", (filename,))
-        first = True
         while rows := cursor.fetchmany(200):
             for row in rows:
-                if not first:
-                    output.write("\n")
                 output.write(row["raw_json"])
-                first = False
+                output.write("\n")
 
 
 async def load_result_summary(filename: str, *, task_id: int | None = None, task_name: str | None = None) -> dict | None:
@@ -428,33 +428,36 @@ async def load_result_summary(filename: str, *, task_id: int | None = None, task
 def _load_result_summary_sync(filename: str, task_id: int | None = None, task_name: str | None = None) -> dict | None:
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        conn.execute("BEGIN")
-        where, params, keywords = _query_scope(conn, filename)
-        if task_id is not None:
-            where += " AND task_id = ?"
-            params.append(task_id)
-        if task_name is not None:
-            where += " AND task_name = ?"
-            params.append(task_name)
-        counts = conn.execute(f"""SELECT COUNT(*) AS total_items,
-            SUM(is_recommended) AS recommended_items,
-            SUM(is_recommended = 1 AND analysis_source = 'ai') AS ai_recommended_items,
-            SUM(is_recommended = 1 AND analysis_source = 'keyword') AS keyword_recommended_items
-            FROM result_items WHERE {where}""", params).fetchone()
-        if not counts["total_items"]:
-            return None
-        def latest(extra=""):
-            row = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} {extra} ORDER BY crawl_time DESC, id DESC LIMIT 1", params).fetchone()
-            return _decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) if row else None
-        latest_record = latest()
-        counts_dict = {
-            "total_items": int(counts["total_items"] or 0),
-            "recommended_items": int(counts["recommended_items"] or 0),
-            "ai_recommended_items": int(counts["ai_recommended_items"] or 0),
-            "keyword_recommended_items": int(counts["keyword_recommended_items"] or 0),
-        }
-        return {**counts_dict, "latest_crawl_time": latest_record.get("爬取时间") if latest_record else None,
-                "latest_record": latest_record, "latest_recommendation": latest("AND is_recommended = 1")}
+        try:
+            conn.execute("BEGIN")
+            where, params, keywords = _query_scope(conn, filename)
+            if task_id is not None:
+                where += " AND task_id = ?"
+                params.append(task_id)
+            if task_name is not None:
+                where += " AND task_name = ?"
+                params.append(task_name)
+            counts = conn.execute(f"""SELECT COUNT(*) AS total_items,
+                SUM(is_recommended) AS recommended_items,
+                SUM(is_recommended = 1 AND analysis_source = 'ai') AS ai_recommended_items,
+                SUM(is_recommended = 1 AND analysis_source = 'keyword') AS keyword_recommended_items
+                FROM result_items WHERE {where}""", params).fetchone()
+            if not counts["total_items"]:
+                return None
+            def latest(extra=""):
+                row = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} {extra} ORDER BY crawl_time DESC, id DESC LIMIT 1", params).fetchone()
+                return _decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) if row else None
+            latest_record = latest()
+            counts_dict = {
+                "total_items": int(counts["total_items"] or 0),
+                "recommended_items": int(counts["recommended_items"] or 0),
+                "ai_recommended_items": int(counts["ai_recommended_items"] or 0),
+                "keyword_recommended_items": int(counts["keyword_recommended_items"] or 0),
+            }
+            return {**counts_dict, "latest_crawl_time": latest_record.get("爬取时间") if latest_record else None,
+                    "latest_record": latest_record, "latest_recommendation": latest("AND is_recommended = 1")}
+        finally:
+            conn.rollback()
 
 
 async def list_result_groups() -> list[dict]:

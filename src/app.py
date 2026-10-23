@@ -2,6 +2,7 @@
 新架构的主应用入口
 整合所有路由和服务
 """
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +37,7 @@ from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepo
 from src.infrastructure.config.settings import settings as app_settings
 from src.api.auth import WebAuthMiddleware
 from src.services.web_auth_service import WebAuthService
+from src.services.account_login_service import account_login_service
 
 
 # 全局服务实例
@@ -96,6 +98,7 @@ async def lifespan(app: FastAPI):
     finally:
         print("正在关闭应用...")
         scheduler_service.stop()
+        await asyncio.to_thread(account_login_service.shutdown)
         await process_service.stop_all()
         print("应用已关闭")
 

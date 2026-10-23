@@ -69,10 +69,12 @@ async def get_result_files():
 @router.get("/files/{filename:path}")
 async def download_result_file(filename: str):
     """下载指定的结果文件"""
-    if ".." in filename or filename.startswith("/"):
-        return {"error": "非法的文件路径"}
-    if not filename.endswith(".jsonl") or not await result_file_exists(filename):
-        return {"error": "文件不存在"}
+    try:
+        validate_result_filename(filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="非法的文件路径")
+    if not await result_file_exists(filename):
+        raise HTTPException(status_code=404, detail="文件不存在")
     path = await create_result_download(filename)
     return ResultDownloadResponse(
         path=path,
@@ -84,10 +86,10 @@ async def download_result_file(filename: str):
 @router.delete("/files/{filename:path}")
 async def delete_result_file(filename: str):
     """删除指定的结果文件"""
-    if ".." in filename or filename.startswith("/"):
+    try:
+        validate_result_filename(filename)
+    except ValueError:
         raise HTTPException(status_code=400, detail="非法的文件路径")
-    if not filename.endswith(".jsonl"):
-        raise HTTPException(status_code=400, detail="只能删除 .jsonl 文件")
     deleted_rows = await delete_result_file_records(filename)
     if deleted_rows <= 0:
         raise HTTPException(status_code=404, detail="文件不存在")

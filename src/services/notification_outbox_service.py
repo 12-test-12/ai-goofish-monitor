@@ -9,22 +9,29 @@ from src.infrastructure.file_lock import FileLock
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_connection import get_database_path, sqlite_connection
 
+MAX_NOTIFICATION_ATTEMPTS = 15
+
 
 def enqueue_recommendation(conn, result_id: int, record: dict) -> None:
     analysis = record.get("ai_analysis") or {}
     if analysis.get("is_recommended"):
-        conn.execute("""INSERT INTO notification_outbox (result_id, product_json, reason)
+        conn.execute("""INSERT OR IGNORE INTO notification_outbox (result_id, product_json, reason)
             VALUES (?, ?, ?)""", (result_id, json.dumps(record.get("商品信息") or {}, ensure_ascii=False),
                                    str(analysis.get("reason") or "无")))
 
 
-def _claim(now):
+def _claim(now, *, max_attempts=MAX_NOTIFICATION_ATTEMPTS):
     with sqlite_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM notification_outbox WHERE available_at <= ? ORDER BY id LIMIT 1", (now,)).fetchone()
         if row is None:
             return None
         attempts = row["attempts"] + 1
+        if attempts > max_attempts:
+            conn.execute("DELETE FROM notification_outbox WHERE id=?", (row["id"],))
+            conn.commit()
+            print(f"[通知队列] 任务 ID {row['id']} 达到最大重试次数 ({max_attempts})，放弃投递并已清理: {row['last_error'] or '超限'}")
+            return None
         delay = min(3600, 30 * 2 ** min(attempts - 1, 7))
         # Crash before acknowledgement leaves the job pending, with bounded backoff.
         conn.execute("UPDATE notification_outbox SET attempts=?, available_at=? WHERE id=?", (attempts, now + delay, row["id"]))

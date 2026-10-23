@@ -18,24 +18,27 @@ class SchedulerService:
     """调度服务"""
 
     def __init__(self, process_service: ProcessService):
-        if AsyncIOScheduler is None:
-            raise ImportError("apscheduler is required: pip install apscheduler")
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
         self.process_service = process_service
+        self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai") if AsyncIOScheduler is not None else None
 
     def start(self):
         """启动调度器"""
+        if self.scheduler is None:
+            print("未安装 apscheduler，定时调度功能已禁用")
+            return
         if not self.scheduler.running:
             self.scheduler.start()
             print("调度器已启动")
 
     def stop(self):
         """停止调度器"""
-        if self.scheduler.running:
+        if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown()
             print("调度器已停止")
 
     def get_next_run_time(self, task_id: int):
+        if self.scheduler is None:
+            return None
         job = self.scheduler.get_job(f"task_{task_id}")
         if job is None:
             return None
@@ -56,6 +59,8 @@ class SchedulerService:
 
     async def reload_jobs(self, tasks: List[Task]):
         """重新加载所有定时任务"""
+        if self.scheduler is None:
+            return
         print("正在重新加载定时任务...")
         self.scheduler.remove_all_jobs()
 

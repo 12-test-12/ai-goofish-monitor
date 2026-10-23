@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listAccounts, getAccount, createAccount, updateAccount, deleteAccount, type AccountItem } from '@/api/accounts'
+import { startAccountLogin, getAccountLogin, cancelAccountLogin, type AccountLoginSession } from '@/api/accounts'
+import { QrCode, LoaderCircle } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -27,6 +29,70 @@ const newContent = ref('')
 const editName = ref('')
 const editContent = ref('')
 const deleteName = ref('')
+const createMode = ref<'qr' | 'json'>('qr')
+const qrSession = ref<AccountLoginSession | null>(null)
+const qrError = ref('')
+const isQrStarting = ref(false)
+const qrActive = computed(() => isQrStarting.value || ['starting', 'waiting', 'scanned'].includes(qrSession.value?.status ?? ''))
+let qrTimer: ReturnType<typeof setTimeout> | undefined
+let qrVersion = 0
+
+async function stopQrLogin() {
+  ++qrVersion
+  clearTimeout(qrTimer)
+  const session = qrSession.value
+  qrSession.value = null
+  isQrStarting.value = false
+  if (session) await cancelAccountLogin(session.session_id).catch(() => {})
+}
+
+async function pollQrLogin(sessionId: string, version: number) {
+  try {
+    const session = await getAccountLogin(sessionId)
+    if (version !== qrVersion) return
+    qrSession.value = session
+    if (session.status === 'success') {
+      toast({ title: t('accounts.toasts.created'), description: t('accounts.qr.saved') })
+      isCreateDialogOpen.value = false
+      await fetchAccounts()
+    } else if (['starting', 'waiting', 'scanned'].includes(session.status)) {
+      qrTimer = setTimeout(() => void pollQrLogin(sessionId, version), 1200)
+    }
+  } catch (e) {
+    if (version !== qrVersion) return
+    qrError.value = (e as Error).message
+    await stopQrLogin()
+  }
+}
+
+async function handleStartQrLogin() {
+  if (!/^[a-zA-Z0-9_-]{1,50}$/.test(newName.value.trim())) {
+    qrError.value = t('accounts.qr.invalidName')
+    return
+  }
+  await stopQrLogin()
+  const version = ++qrVersion
+  isQrStarting.value = true
+  qrError.value = ''
+  try {
+    const session = await startAccountLogin(newName.value.trim())
+    if (version !== qrVersion) {
+      await cancelAccountLogin(session.session_id)
+      return
+    }
+    qrSession.value = session
+    void pollQrLogin(session.session_id, version)
+  } catch (e) {
+    if (version === qrVersion) qrError.value = (e as Error).message
+  } finally {
+    if (version === qrVersion) isQrStarting.value = false
+  }
+}
+
+watch([isCreateDialogOpen, createMode], ([open, mode]) => {
+  if (!open || mode !== 'qr') void stopQrLogin()
+})
+onBeforeUnmount(() => void stopQrLogin())
 
 async function fetchAccounts() {
   isLoading.value = true
@@ -42,6 +108,8 @@ async function fetchAccounts() {
 function openCreateDialog() {
   newName.value = ''
   newContent.value = ''
+  createMode.value = 'qr'
+  qrError.value = ''
   isCreateDialogOpen.value = true
 }
 
@@ -133,32 +201,20 @@ onMounted(fetchAccounts)
 
     <Card class="app-surface mb-6 border-none">
       <CardHeader>
-        <CardTitle>{{ t('accounts.cookieGuide.title') }}</CardTitle>
+        <CardTitle>{{ t('accounts.qr.guideTitle') }}</CardTitle>
       </CardHeader>
-      <CardContent class="text-sm text-gray-600">
-        <ol class="list-decimal list-inside space-y-1">
-          <li>
-            {{ t('accounts.cookieGuide.step1Prefix') }}
-            <a
-              class="text-blue-600 hover:underline"
-              href="https://chromewebstore.google.com/detail/xianyu-login-state-extrac/eidlpfjiodpigmfcahkmlenhppfklcoa"
-              target="_blank"
-              rel="noopener noreferrer"
-            >{{ t('accounts.cookieGuide.extension') }}</a>
-          </li>
-          <li>
-            {{ t('accounts.cookieGuide.step2Prefix') }}
-            <a
-              class="text-blue-600 hover:underline"
-              href="https://www.goofish.com"
-              target="_blank"
-              rel="noopener noreferrer"
-            >{{ t('accounts.cookieGuide.website') }}</a>
-          </li>
-          <li>{{ t('accounts.cookieGuide.step3') }}</li>
-          <li>{{ t('accounts.cookieGuide.step4') }}</li>
-          <li>{{ t('accounts.cookieGuide.step5') }}</li>
-        </ol>
+      <CardContent class="text-sm text-gray-600 space-y-2">
+        <p>{{ t('accounts.qr.guide') }}</p>
+        <details>
+          <summary class="cursor-pointer text-blue-600">{{ t('accounts.qr.manualGuide') }}</summary>
+          <ol class="mt-3 list-decimal list-inside space-y-1">
+            <li>{{ t('accounts.cookieGuide.step1Prefix') }} <a class="text-blue-600 hover:underline" href="https://chromewebstore.google.com/detail/xianyu-login-state-extrac/eidlpfjiodpigmfcahkmlenhppfklcoa" target="_blank" rel="noopener noreferrer">{{ t('accounts.cookieGuide.extension') }}</a></li>
+            <li>{{ t('accounts.cookieGuide.step2Prefix') }} <a class="text-blue-600 hover:underline" href="https://www.goofish.com" target="_blank" rel="noopener noreferrer">{{ t('accounts.cookieGuide.website') }}</a></li>
+            <li>{{ t('accounts.cookieGuide.step3') }}</li>
+            <li>{{ t('accounts.cookieGuide.step4') }}</li>
+            <li>{{ t('accounts.cookieGuide.step5') }}</li>
+          </ol>
+        </details>
       </CardContent>
     </Card>
 
@@ -225,24 +281,39 @@ onMounted(fetchAccounts)
     </Card>
 
     <Dialog v-model:open="isCreateDialogOpen">
-      <DialogContent class="sm:max-w-[700px]">
+      <DialogContent class="max-h-[90dvh] w-[calc(100%-2rem)] overflow-y-auto sm:max-w-[700px]">
         <DialogHeader>
           <DialogTitle>{{ t('accounts.createDialog.title') }}</DialogTitle>
-          <DialogDescription>{{ t('accounts.createDialog.description') }}</DialogDescription>
+          <DialogDescription>{{ t(createMode === 'qr' ? 'accounts.qr.description' : 'accounts.createDialog.description') }}</DialogDescription>
         </DialogHeader>
         <div class="space-y-4">
-          <div class="grid gap-2">
-            <Label>{{ t('accounts.createDialog.name') }}</Label>
-            <Input v-model="newName" :placeholder="t('accounts.createDialog.namePlaceholder')" />
+          <div class="flex gap-2" role="group" :aria-label="t('accounts.qr.method')">
+            <Button :variant="createMode === 'qr' ? 'default' : 'outline'" :aria-pressed="createMode === 'qr'" @click="createMode = 'qr'">{{ t('accounts.qr.tab') }}</Button>
+            <Button :variant="createMode === 'json' ? 'default' : 'outline'" :aria-pressed="createMode === 'json'" @click="createMode = 'json'">{{ t('accounts.qr.manual') }}</Button>
           </div>
           <div class="grid gap-2">
+            <Label for="new-account-name">{{ t('accounts.createDialog.name') }}</Label>
+            <Input id="new-account-name" v-model="newName" :disabled="qrActive" maxlength="50" :placeholder="t('accounts.createDialog.namePlaceholder')" />
+          </div>
+          <div v-if="createMode === 'qr'" class="rounded-xl border bg-slate-50 p-5 text-center space-y-3">
+            <div class="mx-auto flex h-56 w-56 items-center justify-center rounded-lg border bg-white p-3">
+              <img v-if="qrSession?.qr_image && qrActive" :src="qrSession.qr_image" :alt="t('accounts.qr.imageAlt')" class="h-full w-full object-contain" />
+              <LoaderCircle v-else-if="qrActive" class="h-10 w-10 animate-spin text-blue-500" />
+              <QrCode v-else class="h-16 w-16 text-slate-300" />
+            </div>
+            <p role="status" aria-live="polite" class="text-sm font-medium text-slate-700">{{ t(`accounts.qr.${qrSession?.status ?? (isQrStarting ? 'starting' : 'idle')}`) }}</p>
+            <p v-if="qrError || qrSession?.error" role="alert" class="text-sm text-red-600">{{ qrError || qrSession?.error }}</p>
+            <p class="text-xs text-slate-500">{{ t('accounts.qr.hint') }}</p>
+            <Button :disabled="qrActive" @click="handleStartQrLogin">{{ t(qrSession || qrError ? 'accounts.qr.retry' : 'accounts.qr.generate') }}</Button>
+          </div>
+          <div v-else class="grid gap-2">
             <Label>{{ t('accounts.createDialog.jsonContent') }}</Label>
             <Textarea v-model="newContent" class="min-h-[200px]" :placeholder="t('accounts.createDialog.jsonPlaceholder')" />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" @click="isCreateDialogOpen = false">{{ t('common.cancel') }}</Button>
-          <Button :disabled="isSaving" @click="handleCreateAccount">
+          <Button v-if="createMode === 'json'" :disabled="isSaving" @click="handleCreateAccount">
             {{ isSaving ? t('common.saving') : t('common.save') }}
           </Button>
         </DialogFooter>

@@ -8,8 +8,11 @@ import aiofiles
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List
+from pathlib import Path
+from fastapi.responses import JSONResponse
 from src.infrastructure.config.env_manager import env_manager
 from src.infrastructure.paths import safe_child_path
+from src.services.account_login_service import account_login_service
 
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -24,6 +27,10 @@ class AccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     content: str
+
+
+class AccountLoginCreate(BaseModel):
+    name: str
 
 
 def _strip_quotes(value: str) -> str:
@@ -78,6 +85,37 @@ async def list_accounts():
             "path": os.path.join(state_dir, filename),
         })
     return accounts
+
+
+@router.post("/qr-login", response_model=dict)
+async def start_qr_login(data: AccountLoginCreate):
+    name = _validate_name(data.name)
+    path = Path(_account_path(name)).resolve()
+    if path.exists():
+        raise HTTPException(status_code=409, detail="账号已存在，请使用其他账号名称。")
+    try:
+        result = account_login_service.start(name, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/qr-login/{session_id}", response_model=dict)
+async def get_qr_login(session_id: str):
+    try:
+        result = account_login_service.get(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="扫码会话不存在或已过期，请重新生成二维码。")
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@router.delete("/qr-login/{session_id}", response_model=dict)
+async def cancel_qr_login(session_id: str):
+    try:
+        account_login_service.cancel(session_id)
+    except KeyError:
+        pass
+    return {"message": "扫码会话已关闭"}
 
 
 @router.get("/{name}", response_model=dict)

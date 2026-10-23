@@ -25,7 +25,7 @@ const { t } = useI18n()
     </div>
 
     <!-- Header -->
-    <TheHeader class="sticky top-0 z-50 glass" />
+    <TheHeader class="sticky top-0 z-40 glass" />
 
     <transition name="mobile-nav">
       <div v-if="isMobileNavOpen" class="fixed inset-0 z-[90] md:hidden">

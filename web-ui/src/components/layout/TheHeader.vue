@@ -37,7 +37,7 @@ function goPrompts() {
 </script>
 
 <template>
-  <header class="flex items-center justify-between px-6 h-16 bg-white/60 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-[100]">
+  <header class="flex items-center justify-between px-6 h-16 bg-white/60 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40">
     <!-- Brand Logo -->
     <RouterLink
       to="/dashboard"

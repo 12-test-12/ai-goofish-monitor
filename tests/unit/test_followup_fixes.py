@@ -303,3 +303,70 @@ def test_api_price_work_runs_outside_its_event_loop(monkeypatch):
             include_hidden=False, sort_by="crawl_time", sort_order="desc")
     asyncio.run(run())
     assert observed
+
+
+def test_tray_missing_icon_uses_fallback_without_raising(monkeypatch):
+    import sys
+    from unittest.mock import Mock
+    from src.desktop.shell import DesktopTray
+    window = Mock()
+    fake_pystray = Mock()
+    fake_pil = Mock()
+    fake_image_mod = Mock()
+    fake_pil.Image = fake_image_mod
+    monkeypatch.setattr("sys.modules", {**sys.modules, "pystray": fake_pystray, "PIL": fake_pil, "PIL.Image": fake_image_mod})
+    tray = DesktopTray(window, Path("non_existent_icon.png"))
+    tray.start()
+    assert fake_pystray.Icon.called
+    assert tray.icon is not None
+
+
+def test_notification_outbox_drops_poison_pill_after_max_attempts(tmp_path, monkeypatch):
+    import time
+    from src.services import notification_outbox_service as outbox
+    db_file = tmp_path / "test.sqlite3"
+    monkeypatch.setenv("APP_DATABASE_FILE", str(db_file))
+    storage.bootstrap_sqlite_storage()
+
+    with storage.sqlite_connection() as conn:
+        conn.execute("INSERT INTO result_items (id, result_filename, keyword, task_name, crawl_time, link_unique_key, is_recommended, keyword_hit_count, raw_json) VALUES (1, 't.jsonl', 'k', 'n', 'c', 'l', 1, 0, '{}')")
+        conn.execute("INSERT INTO notification_outbox (id, result_id, product_json, reason, attempts, available_at, last_error) VALUES (1, 1, '{}', 'r', 15, 0, 'Permanent error')")
+        conn.commit()
+
+    claimed = outbox._claim(time.time(), max_attempts=15)
+    assert claimed is None
+
+    with storage.sqlite_connection() as conn:
+        row = conn.execute("SELECT * FROM notification_outbox WHERE id = 1").fetchone()
+        assert row is None
+
+
+def test_validate_result_filename_rejects_windows_slashes_and_empty():
+    from src.services.result_file_service import validate_result_filename
+    with pytest.raises(ValueError):
+        validate_result_filename("sub\\file.jsonl")
+    with pytest.raises(ValueError):
+        validate_result_filename("sub/file.jsonl")
+    with pytest.raises(ValueError):
+        validate_result_filename("..\\file.jsonl")
+    with pytest.raises(ValueError):
+        validate_result_filename("")
+    validate_result_filename("safe_full_data.jsonl")
+
+
+def test_write_result_ndjson_writes_complete_trailing_newlines(tmp_path, monkeypatch):
+    import io
+    db_file = tmp_path / "test.sqlite3"
+    monkeypatch.setenv("APP_DATABASE_FILE", str(db_file))
+    storage.bootstrap_sqlite_storage()
+
+    with storage.sqlite_connection() as conn:
+        conn.execute("INSERT INTO result_items (id, result_filename, keyword, task_name, crawl_time, link_unique_key, is_recommended, keyword_hit_count, raw_json) VALUES (1, 't.jsonl', 'k', 'n', 'c', 'l', 1, 0, '{\"item\": 1}')")
+        conn.execute("INSERT INTO result_items (id, result_filename, keyword, task_name, crawl_time, link_unique_key, is_recommended, keyword_hit_count, raw_json) VALUES (2, 't.jsonl', 'k', 'n', 'c', 'l2', 1, 0, '{\"item\": 2}')")
+        conn.commit()
+
+    buf = io.StringIO()
+    storage.write_result_ndjson("t.jsonl", buf)
+    lines = buf.getvalue().splitlines()
+    assert len(lines) == 2
+    assert buf.getvalue().endswith("\n")

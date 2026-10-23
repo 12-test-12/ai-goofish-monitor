@@ -13,7 +13,7 @@ from src.services.result_storage_service import load_visible_market_summary
 
 
 def validate_result_filename(filename: str) -> None:
-    if not filename.endswith(".jsonl") or "/" in filename or ".." in filename:
+    if not filename or not filename.endswith(".jsonl") or "/" in filename or "\\" in filename or ".." in filename:
         raise ValueError("无效的文件名")
 
 
