@@ -23,15 +23,17 @@ def enqueue_recommendation(conn, result_id: int, record: dict) -> None:
 def _claim(now, *, max_attempts=MAX_NOTIFICATION_ATTEMPTS):
     with sqlite_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        expired = conn.execute(
+            "DELETE FROM notification_outbox WHERE available_at <= ? AND attempts >= ?",
+            (now, max_attempts),
+        ).rowcount
+        if expired:
+            print(f"[通知队列] 已清理 {expired} 条达到最大重试次数 ({max_attempts}) 的消息")
         row = conn.execute("SELECT * FROM notification_outbox WHERE available_at <= ? ORDER BY id LIMIT 1", (now,)).fetchone()
         if row is None:
+            conn.commit()
             return None
         attempts = row["attempts"] + 1
-        if attempts > max_attempts:
-            conn.execute("DELETE FROM notification_outbox WHERE id=?", (row["id"],))
-            conn.commit()
-            print(f"[通知队列] 任务 ID {row['id']} 达到最大重试次数 ({max_attempts})，放弃投递并已清理: {row['last_error'] or '超限'}")
-            return None
         delay = min(3600, 30 * 2 ** min(attempts - 1, 7))
         # Crash before acknowledgement leaves the job pending, with bounded backoff.
         conn.execute("UPDATE notification_outbox SET attempts=?, available_at=? WHERE id=?", (attempts, now + delay, row["id"]))
@@ -58,17 +60,26 @@ async def dispatch_pending_notifications(*, sender=None, batch_size=20, now=None
             job = await asyncio.to_thread(_claim, time.time() if now is None else now)
             if job is None:
                 break
-            pending = json.loads(job["pending_channels_json"]) if job["pending_channels_json"] else None
             try:
+                pending = json.loads(job["pending_channels_json"]) if job["pending_channels_json"] else None
+                if pending is not None and (
+                    not isinstance(pending, list) or not all(isinstance(channel, str) and channel for channel in pending)
+                ):
+                    raise ValueError("Invalid pending notification channels")
                 results = await (sender or _send)(json.loads(job["product_json"]), job["reason"], pending)
-                failed = [channel for channel, result in results.items() if not result.get("success")]
+                if not isinstance(results, dict):
+                    raise TypeError("Invalid notification receipts")
+                channels = dict.fromkeys([*(pending or []), *results])
+                failed = [channel for channel in channels if not (
+                    isinstance(results.get(channel), dict) and results[channel].get("success") is True
+                )]
                 error = "部分通知渠道发送失败" if failed else ""
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 # Keep the previous channel set when no trustworthy acknowledgement exists.
                 error = type(exc).__name__
-                await asyncio.to_thread(_retain, job["id"], pending, error)
+                await asyncio.to_thread(_record_error, job["id"], error)
                 print(f"[通知队列] 第 {job['attempts'] + 1} 次发送失败，稍后重试: {error}")
                 continue
             if failed:
@@ -86,6 +97,12 @@ def _retain(job_id, channels, error):
     with sqlite_connection() as conn:
         conn.execute("UPDATE notification_outbox SET pending_channels_json=?, last_error=? WHERE id=?",
                      (json.dumps(channels) if channels is not None else None, error, job_id))
+        conn.commit()
+
+
+def _record_error(job_id, error):
+    with sqlite_connection() as conn:
+        conn.execute("UPDATE notification_outbox SET last_error=? WHERE id=?", (error, job_id))
         conn.commit()
 
 
