@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import time
 import tempfile
@@ -79,14 +80,36 @@ def _get_mtime(path: Optional[str]) -> Optional[float]:
 
 
 def _cookie_changed(
-    cookie_path: Optional[str], previous_mtime: Optional[float]
+    cookie_path: Optional[str], previous_mtime: Optional[float],
+    *, previous_path: Optional[str] = None, previous_digest: Optional[str] = None,
 ) -> bool:
     if not cookie_path:
         return False
     current = _get_mtime(cookie_path)
-    if current is None or previous_mtime is None:
+    if current is None:
         return False
-    return current > (previous_mtime + 1e-6)
+    if previous_mtime is None:
+        return bool(previous_path)
+    if previous_path and os.path.normcase(os.path.abspath(cookie_path)) != os.path.normcase(os.path.abspath(previous_path)):
+        return True
+    if previous_digest:
+        digest = _cookie_digest(cookie_path)
+        if digest is not None:
+            return digest != previous_digest
+    return abs(current - previous_mtime) > 1e-6
+
+
+def _cookie_digest(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as stream:
+            digest = hashlib.sha256()
+            for block in iter(lambda: stream.read(65536), b""):
+                digest.update(block)
+            return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def _ensure_parent_dir(path: str) -> None:
@@ -215,6 +238,7 @@ class FailureGuard:
             "last_success_at": _dt_to_str(current),
             "cookie_path": None,
             "cookie_mtime": None,
+            "cookie_sha256": None,
         }
 
     def should_skip_start(
@@ -245,6 +269,9 @@ class FailureGuard:
         last_notified_date = entry.get("last_notified_date")
 
         previous_cookie_mtime = entry.get("cookie_mtime")
+        # Automatic account selection has no explicit path in the task config.
+        # Recheck the account actually used by the worker on its last failure.
+        cookie_path = cookie_path or entry.get("cookie_path")
         if cookie_path and previous_cookie_mtime is not None:
             try:
                 previous_cookie_mtime = float(previous_cookie_mtime)
@@ -255,7 +282,10 @@ class FailureGuard:
             paused_until
             and paused_until > current
             and cookie_path
-            and _cookie_changed(cookie_path, previous_cookie_mtime)
+            and _cookie_changed(
+                cookie_path, previous_cookie_mtime,
+                previous_path=entry.get("cookie_path"), previous_digest=entry.get("cookie_sha256"),
+            )
         ):
             # cookies / 登录态更新 => 自动恢复
             data["tasks"][task_key] = self._success_entry(current)
@@ -303,6 +333,7 @@ class FailureGuard:
         current = _now(self.tz_name, now=now)
         today = _today_str(self.tz_name, now=current)
         cookie_mtime = _get_mtime(cookie_path)
+        cookie_digest = _cookie_digest(cookie_path)
 
         effective_threshold = max(1, int(min_failures_to_pause or self.threshold))
 
@@ -324,7 +355,10 @@ class FailureGuard:
             except (TypeError, ValueError):
                 prev_mtime = None
 
-            if cookie_path and _cookie_changed(cookie_path, prev_mtime):
+            if cookie_path and _cookie_changed(
+                cookie_path, prev_mtime,
+                previous_path=entry.get("cookie_path"), previous_digest=entry.get("cookie_sha256"),
+            ):
                 entry["consecutive_failures"] = 0
                 entry["paused_until"] = None
                 entry["last_notified_date"] = None
@@ -337,6 +371,7 @@ class FailureGuard:
                 entry["cookie_path"] = cookie_path
                 if cookie_mtime is not None:
                     entry["cookie_mtime"] = cookie_mtime
+                entry["cookie_sha256"] = cookie_digest
 
             opened = False
             if consecutive >= effective_threshold:

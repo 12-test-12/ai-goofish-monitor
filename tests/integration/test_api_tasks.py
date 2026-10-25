@@ -1,6 +1,7 @@
 import asyncio
 import time
 from unittest.mock import AsyncMock
+from src.services.process_service import TaskStartError
 
 
 def test_create_list_update_delete_task(api_client, api_context, sample_task_payload):
@@ -55,6 +56,23 @@ def test_start_stop_task_updates_status(api_client, api_context, sample_task_pay
     process_service = api_context["process_service"]
     assert process_service.started == [(0, sample_task_payload["task_name"])]
     assert process_service.stopped == [0]
+
+
+def test_start_task_returns_actionable_pause_reason(api_client, api_context, sample_task_payload, monkeypatch):
+    api_client.post("/api/tasks/", json=sample_task_payload)
+    start = AsyncMock(side_effect=TaskStartError("登录状态失效，请重新登录后再运行", status_code=409))
+    monkeypatch.setattr(api_context["process_service"], "start_task", start)
+    response = api_client.post("/api/tasks/start/0")
+    assert response.status_code == 409
+    assert "重新登录" in response.json()["detail"]
+
+
+def test_stale_database_status_does_not_block_start(api_client, api_context, sample_task_payload):
+    api_client.post("/api/tasks/", json=sample_task_payload)
+    response = api_client.patch("/api/tasks/0", json={"is_running": True})
+    assert response.status_code == 200
+    assert api_client.post("/api/tasks/start/0").status_code == 200
+    assert len(api_context["process_service"].started) == 1
 
 
 def test_generate_keyword_mode_task_without_ai_criteria(api_client):

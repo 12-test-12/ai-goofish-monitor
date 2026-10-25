@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -83,6 +84,48 @@ def test_failure_guard_auto_recovers_on_cookie_change(tmp_path):
         now=base + timedelta(minutes=1),
     )
     assert recovered.skip is False
+
+
+@pytest.mark.parametrize("update", ["automatic", "same_timestamp", "older_timestamp", "different_account", "missing_created"])
+def test_login_pause_recovers_when_actual_account_is_updated(tmp_path, update):
+    state = tmp_path / "1.json"
+    if update != "missing_created":
+        state.write_text('{"cookies": ["old"]}', encoding="utf-8")
+    guard = FailureGuard(path=str(tmp_path / "guard.json"), threshold=1)
+    guard.record_failure("task", "LoginRequiredError: login required", cookie_path=str(state))
+    assert guard.should_skip_start("task").skip
+    stamp = state.stat().st_mtime if state.exists() else 1000
+    target = tmp_path / "2.json" if update == "different_account" else state
+    target.write_text('{"cookies": ["new"]}', encoding="utf-8")
+    if update == "same_timestamp":
+        os.utime(target, (stamp, stamp))
+    elif update in {"older_timestamp", "different_account"}:
+        os.utime(target, (1000, 1000))
+    decision = guard.should_skip_start("task", cookie_path=None if update == "automatic" else str(target))
+    assert not decision.skip
+    assert not guard.should_skip_start("task").skip
+
+
+def test_touching_unchanged_invalid_cookies_does_not_clear_pause(tmp_path):
+    state = tmp_path / "1.json"
+    state.write_text("{}", encoding="utf-8")
+    guard = FailureGuard(path=str(tmp_path / "guard.json"), threshold=1)
+    guard.record_failure("task", "LoginRequiredError", cookie_path=str(state))
+    stamp = state.stat().st_mtime + 10
+    os.utime(state, (stamp, stamp))
+    assert guard.should_skip_start("task").skip
+
+
+def test_old_pause_without_hash_recovers_on_recorded_account_update(tmp_path):
+    state = tmp_path / "1.json"
+    state.write_text("{}", encoding="utf-8")
+    guard = FailureGuard(path=str(tmp_path / "guard.json"), threshold=1)
+    guard.record_failure("task", "LoginRequiredError", cookie_path=str(state))
+    data = json.loads(Path(guard.path).read_text(encoding="utf-8"))
+    data["tasks"]["task"].pop("cookie_sha256")
+    Path(guard.path).write_text(json.dumps(data), encoding="utf-8")
+    os.utime(state, (1000, 1000))
+    assert not guard.should_skip_start("task").skip
 
 
 def test_failure_guard_serializes_writers_and_keeps_valid_json(tmp_path):

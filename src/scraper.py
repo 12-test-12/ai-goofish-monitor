@@ -220,6 +220,12 @@ async def _notify_task_failure(
         min_failures_to_pause=1 if pause_immediately else None,
     )
 
+    if guard_result.get("paused_until"):
+        until = guard_result["paused_until"].strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[FailureGuard] 任务 '{task_name}' 已自动暂停至 {until}，原因: {formatted_reason}")
+        if "LoginRequiredError:" in formatted_reason:
+            print(f"请在账号管理中更新任务所用账号的登录状态（{cookie_path or '自动选择'}），或为任务重新选择已登录账号后重试。")
+
     if not guard_result.get("should_notify"):
         print(
             f"[FailureGuard] 任务 '{task_name}' 失败计数 {guard_result.get('consecutive_failures')}/{FAILURE_GUARD.threshold}，暂不通知。"
@@ -1302,14 +1308,7 @@ async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
 
     # If this task is already in a paused state, skip immediately.
     task_name_for_guard = task_config.get("task_name", "未命名任务")
-    pause_cookie_path = None
-    if (
-        isinstance(task_config.get("account_state_file"), str)
-        and task_config.get("account_state_file").strip()
-    ):
-        pause_cookie_path = task_config.get("account_state_file").strip()
-    elif os.path.exists(STATE_FILE):
-        pause_cookie_path = STATE_FILE
+    pause_cookie_path = forced_account or (STATE_FILE if runtime_plan["prefer_root_state"] else None)
 
     decision = FAILURE_GUARD.should_skip_start(
         FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard), cookie_path=pause_cookie_path
@@ -1340,7 +1339,7 @@ async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
             except Exception as e:
                 print(f"发送任务暂停通知失败: {e}")
 
-        return 0
+        raise ScrapeTaskError(f"任务已暂停重试，原因: {decision.reason}。请更新登录状态或修复配置后重试。")
 
     for attempt in range(1, attempt_limit + 1):
         if attempt == 1:

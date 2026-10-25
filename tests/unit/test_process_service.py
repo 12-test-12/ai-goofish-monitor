@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.services.process_service import ProcessService
+from src.services.process_service import ProcessService, TaskStartError
 
 
 class FakeProcess:
@@ -79,6 +79,93 @@ def test_process_service_marks_task_stopped_when_process_exits(monkeypatch, tmp_
     asyncio.run(run_scenario())
 
 
+@pytest.mark.parametrize("reason,expected", [
+    ("LoginRequiredError: redirected", "更新任务所用账号的登录状态"),
+    ("RiskControlError: verification", "完成账号验证"),
+    ("network error", "network error"),
+])
+def test_paused_start_explains_reason_without_launching(monkeypatch, tmp_path, reason, expected):
+    service = ProcessService()
+    service.failure_guard.path = str(tmp_path / "guard.json")
+    monkeypatch.setattr(service, "_resolve_cookie_path", lambda _: None)
+    key = service.failure_guard.task_key(7, "task")
+    service.failure_guard.record_failure(key, reason, min_failures_to_pause=1)
+    async def spawn(*args):
+        pytest.fail("paused task must not launch a browser")
+    monkeypatch.setattr(service, "_spawn_process", spawn)
+    with pytest.raises(TaskStartError, match=expected) as caught:
+        asyncio.run(service.start_task(7, "task"))
+    assert caught.value.status_code == 409
+
+
+@pytest.mark.parametrize("recovery", ["automatic_account_updated", "legacy_browser_missing"])
+def test_paused_tasks_can_start_after_account_update_or_browser_upgrade(monkeypatch, tmp_path, recovery):
+    service = ProcessService()
+    service.failure_guard.path = str(tmp_path / "guard.json")
+    monkeypatch.setattr(service, "_resolve_cookie_path", lambda _: None)
+    monkeypatch.setattr(service, "_open_log_file", lambda *a: ("", io.StringIO()))
+    state = tmp_path / "1.json"
+    state.write_text("{}", encoding="utf-8")
+    reason = "LoginRequiredError: redirected" if recovery == "automatic_account_updated" else "Chromium distribution 'chrome' is not found at C:/missing"
+    service.failure_guard.record_failure(service.failure_guard.task_key(7, "task"), reason,
+                                         cookie_path=str(state), min_failures_to_pause=1)
+    if recovery == "automatic_account_updated":
+        state.write_text('{"updated":true}', encoding="utf-8")
+    process = FakeProcess(42)
+
+    async def scenario():
+        async def spawn(*args):
+            return process
+        monkeypatch.setattr(service, "_spawn_process", spawn)
+        assert await service.start_task(7, "task")
+        process.finish()
+        await service._await_exit_watcher(7)
+    asyncio.run(scenario())
+
+
+def test_spawn_failure_explains_error_and_releases_start_lock(monkeypatch, startable_service):
+    async def spawn(*args):
+        raise PermissionError("permission denied")
+    monkeypatch.setattr(startable_service, "_spawn_process", spawn)
+    with pytest.raises(TaskStartError, match="permission denied"):
+        asyncio.run(startable_service.start_task(7, "task"))
+    assert not startable_service._starting_task_ids
+    assert not startable_service.processes
+
+
+def test_immediate_worker_exit_cannot_leave_status_running(monkeypatch, startable_service):
+    async def scenario():
+        process = FakeProcess(42)
+        state = {"running": False}
+        hook_entered = asyncio.Event()
+        release_hook = asyncio.Event()
+        stopped = asyncio.Event()
+
+        async def spawn(*args):
+            return process
+
+        async def on_started(task_id):
+            hook_entered.set()
+            await release_hook.wait()
+            state["running"] = True
+
+        async def on_stopped(task_id):
+            state["running"] = False
+            stopped.set()
+
+        monkeypatch.setattr(startable_service, "_spawn_process", spawn)
+        startable_service.set_lifecycle_hooks(on_started=on_started, on_stopped=on_stopped)
+        start = asyncio.create_task(startable_service.start_task(7, "task"))
+        await hook_entered.wait()
+        process.finish(1)
+        await stopped.wait()
+        release_hook.set()
+        assert await start
+        assert not state["running"]
+        assert not startable_service.processes
+    asyncio.run(scenario())
+
+
 def test_process_service_reindexes_runtime_maps_after_delete():
     service = ProcessService()
     proc_a = object()
@@ -114,6 +201,17 @@ def test_process_service_adds_debug_limit_arg_when_env_enabled(monkeypatch):
         "--debug-limit",
         "1",
     ]
+
+
+@pytest.mark.parametrize("strategy,expected", [("rotate", None), ("auto", "root.json"), ("fixed", "state/1.json")])
+def test_pause_recovery_checks_only_the_account_selected_by_task_strategy(monkeypatch, tmp_path, strategy, expected):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "root.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr("src.services.process_service.STATE_FILE", "root.json")
+    monkeypatch.setattr("src.services.process_service.find_task_by_id_sync", lambda _: SimpleNamespace(
+        account_strategy=strategy, account_state_file="state/1.json"
+    ))
+    assert ProcessService()._resolve_cookie_path(7) == expected
 
 
 def test_process_service_windows_terminate_invokes_taskkill(monkeypatch):

@@ -14,6 +14,8 @@ from typing import Awaitable, Callable, Dict, Set, TextIO
 from src.ai_handler import send_ntfy_notification
 from src.config import STATE_FILE
 from src.failure_guard import FailureGuard
+from src.services.browser_launcher import is_missing_browser_error
+from src.services.account_strategy_service import normalize_account_strategy
 from src.infrastructure.persistence.sqlite_task_repository import find_task_by_id_sync
 from src.utils import build_task_log_path
 
@@ -24,6 +26,12 @@ LifecycleHook = Callable[[int], Awaitable[None] | None]
 
 class TaskDeletionError(RuntimeError):
     pass
+
+
+class TaskStartError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int = 500):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class ProcessService:
@@ -62,8 +70,13 @@ class ProcessService:
         """Best-effort cookie/state path for a task."""
         try:
             task = find_task_by_id_sync(task_id)
-            if task and isinstance(task.account_state_file, str) and task.account_state_file.strip():
-                return task.account_state_file.strip()
+            if task:
+                account_file = task.account_state_file
+                strategy = normalize_account_strategy(getattr(task, "account_strategy", None), account_file)
+                if strategy == "fixed":
+                    return account_file.strip() if isinstance(account_file, str) and account_file.strip() else None
+                if strategy == "rotate":
+                    return None
         except Exception:
             pass
 
@@ -161,9 +174,21 @@ class ProcessService:
             self.failure_guard.task_key(task_id, task_name),
             cookie_path=self._resolve_cookie_path(task_id),
         )
-        if decision.skip:
+        if decision.skip and is_missing_browser_error(decision.reason):
+            # Upgrade recovery must happen here too: otherwise the API blocks
+            # the worker before it can apply its browser recovery logic.
+            self.failure_guard.record_success(self.failure_guard.task_key(task_id, task_name))
+        elif decision.skip:
             await self._notify_skip(task_name, decision)
-            return False
+            until = decision.paused_until.strftime("%Y-%m-%d %H:%M:%S") if decision.paused_until else "稍后"
+            reason = decision.reason
+            if "LoginRequiredError" in reason or "FAIL_SYS_SESSION_EXPIRED" in reason:
+                action = "闲鱼账号登录验证失败。请在账号管理中更新任务所用账号的登录状态，或重新选择已登录的账号，再点击运行。"
+            elif "RiskControlError" in reason or "FAIL_SYS_USER_VALIDATE" in reason:
+                action = "闲鱼要求验证。请先在浏览器中完成账号验证并更新登录状态，再点击运行。"
+            else:
+                action = f"最近失败原因：{reason}。请修复配置或账号后重试。"
+            raise TaskStartError(f"任务已自动暂停至 {until}。{action}", status_code=409)
 
         self._starting_task_ids.add(task_id)
         log_file_handle = None
@@ -190,11 +215,17 @@ class ProcessService:
         except Exception as exc:
             self._close_log_handle(log_file_handle)
             print(f"启动任务 '{task_name}' 失败: {exc}")
-            return False
+            raise TaskStartError(f"无法启动任务进程：{exc}。请检查软件目录写入权限和日志。") from exc
         finally:
             self._starting_task_ids.discard(task_id)
         print(f"启动任务 '{task_name}' (PID: {process.pid})")
         await self._invoke_hook(self._on_started, task_id)
+        if process.returncode is not None:
+            # A worker can exit while the async "started" hook writes to the
+            # database. Reconcile after that write so it cannot leave a stale
+            # running status over the exit watcher's earlier "stopped" update.
+            await self._drain_finished_process(task_id)
+            await self._invoke_hook(self._on_stopped, task_id)
         return True
 
     async def _notify_skip(self, task_name: str, decision) -> None:

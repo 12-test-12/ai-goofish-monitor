@@ -12,7 +12,7 @@ from src.api.dependencies import (
     get_task_service,
 )
 from src.services.task_service import TaskService
-from src.services.process_service import ProcessService, TaskDeletionError
+from src.services.process_service import ProcessService, TaskDeletionError, TaskStartError
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_generation_runner import (
@@ -273,11 +273,17 @@ async def start_task(
         raise HTTPException(status_code=404, detail="任务未找到")
     if not task.enabled:
         raise HTTPException(status_code=400, detail="任务已被禁用，无法启动")
+    if process_service.is_running(task_id) or process_service.is_starting(task_id):
+        raise HTTPException(status_code=409, detail="任务已在运行或启动中")
     if task.is_running:
-        raise HTTPException(status_code=400, detail="任务已在运行中")
-    success = await process_service.start_task(task_id, task.task_name)
+        # A stale persisted status must not prevent restarting an exited worker.
+        await task_service.update_task_status(task_id, False)
+    try:
+        success = await process_service.start_task(task_id, task.task_name)
+    except TaskStartError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     if not success:
-        raise HTTPException(status_code=500, detail="启动任务失败")
+        raise HTTPException(status_code=409, detail="任务正在运行、启动或删除中，请刷新后重试")
     return {"message": f"任务 '{task.task_name}' 已启动"}
 @router.post("/stop/{task_id}", response_model=dict)
 async def stop_task(
