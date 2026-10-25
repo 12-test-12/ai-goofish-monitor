@@ -128,16 +128,13 @@ class AccountLoginService:
             session.thread.join(timeout=max(0, deadline - time.monotonic()))
 
     def _launch_browser(self, playwright):
-        # The desktop installer may have Edge but no downloaded Playwright browser.
-        channels = [None, "msedge", "chrome"]
-        if os.getenv("LOGIN_IS_EDGE", "false").lower() == "true":
-            channels = ["msedge", None, "chrome"]
-        for channel in channels:
-            try:
-                return playwright.chromium.launch(headless=True, channel=channel, timeout=15000)
-            except Exception:
-                continue
-        raise RuntimeError("无法启动扫码浏览器。请安装 Chrome / Edge，或运行 python -m playwright install chromium 后重试。")
+        from src.services.browser_launcher import launch_browser_sync
+
+        preferred = "msedge" if os.getenv("LOGIN_IS_EDGE", "false").lower() == "true" else "chrome"
+        return launch_browser_sync(
+            playwright, {"headless": True, "channel": preferred, "timeout": 15000},
+            running_in_docker=os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true",
+        )
 
     def _run(self, session: LoginSession) -> None:
         try:

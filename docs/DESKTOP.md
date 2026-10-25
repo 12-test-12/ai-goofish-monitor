@@ -13,6 +13,7 @@ ZIP 包含 EXE、使用说明、构建信息和 SHA256 校验值。解压后运�
 ## 运行环境与数据
 
 - 支持 Windows 10/11 x64，界面使用 Microsoft Edge WebView2 Runtime。通常系统已有该组件；缺少时请从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装 Evergreen Runtime。它与抓取闲鱼所需的浏览器环境是两项独立要求。
+- 抓取与扫码登录共用浏览器选择逻辑：默认优先 Chrome，`LOGIN_IS_EDGE=true` 时优先 Edge；未安装时自动尝试其他本机通道和 Playwright Chromium。便携 EXE 不内置抓取浏览器；全部缺失时需安装完整版 Edge 或 Chrome，源码用户也可在相同 Python 环境执行 `python -m playwright install chromium`。浏览器启动失败会以失败状态退出，不轮换账号/IP，也不累计登录态熔断失败。
 - 默认数据目录为 **EXE 所在文件夹**，不取决于启动快捷方式的工作目录。例如 EXE 位于 `D:\GoofishMonitor\`，则数据库为 `D:\GoofishMonitor\data\app.sqlite3`，配置、账号、图片、日志和界面缓存也保存在该文件夹下。请解压到可写目录运行，移动时一起移动整个文件夹；显式设置的 `GOOFISH_DATA_DIR` 环境变量仍可覆盖默认目录。
 - 旧版 `%LOCALAPPDATA%\GoofishMonitor` 中的数据不会自动迁移或删除。保留旧数据时，先从托盘退出旧版，再将旧目录中的 `.env`、`data/`、`state/`、`prompts/` 等所需文件复制到 EXE 所在文件夹，避免覆盖已有新版数据。
 - 桌面版只监听 `127.0.0.1`，自动预留空闲端口。同一数据目录只允许一个桌面实例，重复打开时请从托盘恢复现有窗口。登录鉴权继续保留。

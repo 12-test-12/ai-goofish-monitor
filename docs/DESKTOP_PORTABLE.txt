@@ -20,7 +20,14 @@
 若缺少桌面界面组件，请安装 Microsoft Edge WebView2 Evergreen Runtime：
 https://developer.microsoft.com/microsoft-edge/webview2/
 
-闲鱼抓取另需本机 Edge 或 Playwright 浏览器环境。当前为未签名的便携版，
+闲鱼抓取另需本机完整版 Microsoft Edge、Google Chrome 或 Playwright Chromium。
+默认优先 Chrome；未安装时会自动尝试 Edge、Chromium，无需因换电脑修改配置。
+WebView2 仅用于软件界面，不能代替抓取浏览器。便携 EXE 不内置上述抓取浏览器；
+若日志提示全部缺失，请安装完整版 Edge 或 Chrome 后重新执行任务。
+旧版本遇到 “Chromium distribution 'chrome' is not found” 时，可在 EXE 同目录
+的 .env 中设置 LOGIN_IS_EDGE=true，退出托盘并重启软件（前提是本机已安装 Edge）。
+浏览器缺失与闲鱼登录态无关；失败后的“临时图片目录不存在”表示还没有下载图片。
+当前为未签名的便携版，
 不包含自动更新或安装向导。升级前请从托盘退出旧版并保留数据目录。
 
 build-info.json 记录本包来源提交、前端构建标识和构建时间，排查旧版本时请一并提供。

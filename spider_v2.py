@@ -232,12 +232,18 @@ async def main():
             await shutdown_task
 
     print("\n--- 所有任务执行完毕 ---")
+    failed = False
     for i, result in enumerate(results):
         task_name = active_task_configs[i]['task_name']
-        if isinstance(result, Exception):
+        if isinstance(result, asyncio.CancelledError):
+            print(f"任务 '{task_name}' 已取消。")
+        elif isinstance(result, BaseException):
+            failed = True
             print(f"任务 '{task_name}' 因异常而终止: {result}")
         else:
             print(f"任务 '{task_name}' 正常结束，本次运行共处理了 {result} 个新商品。")
+    if failed:
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())

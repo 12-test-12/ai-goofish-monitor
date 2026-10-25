@@ -6,6 +6,45 @@ import types
 import pytest
 
 
+@pytest.mark.parametrize("outcome", ["failed", "cancelled", "empty"])
+def test_cli_distinguishes_failure_cancellation_and_success(tmp_path, monkeypatch, capsys, outcome):
+    fake_scraper = types.ModuleType("src.scraper")
+
+    async def scrape(task_config, debug_limit):
+        if task_config["id"] == 1:
+            if outcome == "failed":
+                raise RuntimeError("未找到可用的抓取浏览器")
+            if outcome == "cancelled":
+                raise asyncio.CancelledError()
+        return 0
+
+    fake_scraper.scrape_xianyu = scrape
+    monkeypatch.setitem(sys.modules, "src.scraper", fake_scraper)
+    sys.modules.pop("spider_v2", None)
+    spider = importlib.import_module("spider_v2")
+    config = tmp_path / "tasks.json"
+    config.write_text(json.dumps([
+        {"id": task_id, "task_name": f"task-{task_id}", "keyword": "test", "enabled": True, "decision_mode": "keyword"}
+        for task_id in (1, 2)
+    ]), encoding="utf-8")
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(spider, "STATE_FILE", str(state))
+    monkeypatch.setattr(sys, "argv", ["spider_v2.py", "--config", str(config)])
+    if outcome == "failed":
+        with pytest.raises(SystemExit) as caught:
+            asyncio.run(spider.main())
+        assert caught.value.code == 1
+    else:
+        asyncio.run(spider.main())
+    output = capsys.readouterr().out
+    assert "任务 'task-2' 正常结束" in output
+    expected = {"failed": "因异常而终止", "cancelled": "已取消", "empty": "正常结束"}[outcome]
+    assert f"任务 'task-1' {expected}" in output
+    if outcome != "empty":
+        assert "任务 'task-1' 正常结束" not in output
+
+
 def test_cli_runs_single_task_with_prompt(tmp_path, load_json_fixture, monkeypatch):
     fake_scraper = types.ModuleType("src.scraper")
 

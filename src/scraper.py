@@ -61,6 +61,7 @@ from src.services.price_history_service import (
 from src.services.result_storage_service import load_processed_link_keys
 from src.services.seller_profile_cache import SellerProfileCache
 from src.services.browser_pool import browser_slot
+from src.services.browser_launcher import BrowserLaunchError, is_missing_browser_error, launch_browser
 from src.services.image_cache_service import task_image_lease
 from src.services.notification_outbox_service import dispatch_pending_notifications, send_queued_recommendation
 from src.services.search_pagination import (
@@ -75,6 +76,10 @@ class RiskControlError(Exception):
 
 class LoginRequiredError(Exception):
     """Raised when Goofish redirects to the passport/mini_login flow."""
+
+
+class ScrapeTaskError(RuntimeError):
+    """A failed scrape must not be reported as a successful empty result."""
 
 
 def _raise_for_api_failure(payload: Optional[dict]) -> None:
@@ -96,7 +101,7 @@ EDGE_DOCKER_WARNING_PRINTED = False
 async def _managed_scrape_browser(playwright, launch_kwargs):
     """从浏览器启动成功起保护资源，覆盖上下文初始化和分析收尾异常。"""
     async with browser_slot():
-        browser = await playwright.chromium.launch(**launch_kwargs)
+        browser = await launch_browser(playwright, launch_kwargs, running_in_docker=RUNNING_IN_DOCKER)
         try:
             yield browser
         finally:
@@ -1309,7 +1314,12 @@ async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
     decision = FAILURE_GUARD.should_skip_start(
         FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard), cookie_path=pause_cookie_path
     )
-    if decision.skip:
+    if decision.skip and is_missing_browser_error(decision.reason):
+        # Older desktop releases counted missing Chrome as an account failure.
+        # Let upgraded installs retry browser discovery without replacing cookies.
+        FAILURE_GUARD.record_success(FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard))
+        print("旧版因缺少浏览器暂停的任务将重新检查本机浏览器。")
+    elif decision.skip:
         print(
             f"[FailureGuard] 任务 '{task_name_for_guard}' 已暂停重试 (连续失败 {decision.consecutive_failures}/{FAILURE_GUARD.threshold})"
         )
@@ -1376,6 +1386,10 @@ async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
             last_error = ""
             FAILURE_GUARD.record_success(FAILURE_GUARD.task_key(task_config.get("id"), task_name_for_guard))
             break
+        except BrowserLaunchError:
+            # No account has been used yet. Do not blacklist it or open the
+            # login circuit breaker for a missing/blocked local browser.
+            raise
         except LoginRequiredError as e:
             last_error = f"LoginRequiredError: {e}"
             print(f"检测到登录失效/重定向: {e}")
@@ -1393,5 +1407,6 @@ async def _scrape_xianyu_impl(task_config: dict, debug_limit: int = 0):
 
     if last_error:
         await _notify_task_failure(task_config, last_error, cookie_path=last_state_path)
+        raise ScrapeTaskError(last_error)
 
     return processed_item_count

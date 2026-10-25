@@ -64,12 +64,12 @@ def test_detail_risk_control_stops_before_next_item_and_cancels_analysis(tmp_pat
         for index in range(2)
     ]))
 
-    result = asyncio.run(scraper.scrape_xianyu({
-        "id": 42, "task_name": "risk-test", "keyword": "test", "max_pages": 2,
-        "account_state_file": str(state), "account_rotation": {"retry_limit": 3},
-        "proxy_rotation": {"enabled": False, "retry_limit": 3},
-    }))
-    assert result == 0
+    with pytest.raises(scraper.ScrapeTaskError):
+        asyncio.run(scraper.scrape_xianyu({
+            "id": 42, "task_name": "risk-test", "keyword": "test", "max_pages": 2,
+            "account_state_file": str(state), "account_rotation": {"retry_limit": 3},
+            "proxy_rotation": {"enabled": False, "retry_limit": 3},
+        }))
     assert context.new_page.await_count == (1 if failure_stage == "search_risk" else 2)
     playwright_instance.chromium.launch.assert_awaited_once()
     dispatcher.cancel.assert_awaited_once()

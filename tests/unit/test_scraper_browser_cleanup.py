@@ -42,15 +42,55 @@ def test_scraper_closes_browser_on_initialization_or_analysis_failure(monkeypatc
     monkeypatch.setattr(scraper, "_notify_task_failure", notify_failure)
     monkeypatch.setattr(scraper, "cleanup_task_images", lambda _: None)
 
-    assert asyncio.run(scraper.scrape_xianyu({
-        "keyword": "cleanup-test",
-        "account_state_file": str(state_file),
-        "account_rotation": {"enabled": False, "retry_limit": 1},
-        "proxy_rotation": {"enabled": False, "retry_limit": 1},
-    })) == 0
+    with pytest.raises(scraper.ScrapeTaskError, match=stage):
+        asyncio.run(scraper.scrape_xianyu({
+            "keyword": "cleanup-test",
+            "account_state_file": str(state_file),
+            "account_rotation": {"enabled": False, "retry_limit": 1},
+            "proxy_rotation": {"enabled": False, "retry_limit": 1},
+        }))
     notify_failure.assert_awaited_once()
     assert notify_failure.await_args.args[1] == f"RuntimeError: {stage}"
     browser.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("previous_browser_pause", [False, True])
+def test_missing_browser_does_not_rotate_or_penalize_accounts(monkeypatch, tmp_path, previous_browser_pause):
+    monkeypatch.setenv("APP_DATABASE_FILE", str(tmp_path / "app.sqlite3"))
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    launch = AsyncMock(side_effect=scraper.BrowserLaunchError("browser missing"))
+
+    @asynccontextmanager
+    async def playwright():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr(scraper, "async_playwright", playwright)
+    monkeypatch.setattr(scraper, "launch_browser", launch)
+    monkeypatch.setattr(scraper, "load_price_snapshots", lambda _: [])
+    monkeypatch.setattr(scraper, "load_processed_link_keys", lambda *_: set())
+    monkeypatch.setattr(scraper, "prepare_chromium_launch_args", lambda: [])
+    monkeypatch.setattr(scraper.FAILURE_GUARD, "should_skip_start", lambda *a, **kw: SimpleNamespace(
+        skip=previous_browser_pause, reason="Error: Chromium distribution 'chrome' is not found at C:/missing"
+    ))
+    reset = []
+    monkeypatch.setattr(scraper.FAILURE_GUARD, "record_success", reset.append)
+    notify = AsyncMock()
+    monkeypatch.setattr(scraper, "_notify_task_failure", notify)
+    cleanup = []
+    monkeypatch.setattr(scraper, "cleanup_task_images", cleanup.append)
+    mark_bad = []
+    monkeypatch.setattr(scraper.RotationPool, "mark_bad", lambda *args: mark_bad.append(args))
+    with pytest.raises(scraper.BrowserLaunchError, match="browser missing"):
+        asyncio.run(scraper.scrape_xianyu({
+            "id": 7, "keyword": "browser-test", "account_state_file": str(state_file),
+            "account_rotation": {"retry_limit": 3}, "proxy_rotation": {"retry_limit": 3},
+        }))
+    launch.assert_awaited_once()
+    notify.assert_not_awaited()
+    assert not mark_bad
+    assert cleanup == ["task-id:7"]
+    assert len(reset) == int(previous_browser_pause)
 
 
 def test_managed_browser_closes_on_cancellation(monkeypatch, tmp_path):
