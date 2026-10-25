@@ -3,6 +3,8 @@ import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTasks } from '@/composables/useTasks'
+import { useTaskGenerationJob } from '@/composables/useTaskGenerationJob'
+import TaskGenerationDialog from '@/components/tasks/TaskGenerationDialog.vue'
 import type { Task, TaskUpdate } from '@/types/task.d.ts'
 import { parseTaskFormDefaults } from '@/lib/taskFormQuery'
 import TaskCreateDialog from '@/components/tasks/TaskCreateDialog.vue'
@@ -39,6 +41,8 @@ const route = useRoute()
 const isEditDialogOpen = ref(false)
 const isCriteriaDialogOpen = ref(false)
 const isEditSubmitting = ref(false)
+const isUpdateProgressOpen = ref(false)
+const { activeJob: updateJob, pollingError, beginPolling, clearJob } = useTaskGenerationJob()
 const selectedTask = ref<Task | null>(null)
 const criteriaTask = ref<Task | null>(null)
 const criteriaDescription = ref('')
@@ -101,8 +105,15 @@ async function handleUpdateTask(data: TaskUpdate) {
   if (!selectedTask.value) return
   isEditSubmitting.value = true
   try {
-    await updateTask(selectedTask.value.id, data)
+    const result = await updateTask(selectedTask.value.id, data)
     isEditDialogOpen.value = false
+    if (result?.job) {
+      clearJob()
+      isUpdateProgressOpen.value = true
+      beginPolling(result.job)
+    } else {
+      toast({ title: t('tasks.toasts.updated') })
+    }
   }
   catch (e) {
     toast({
@@ -135,8 +146,13 @@ async function handleRefreshCriteria() {
 
   isCriteriaSubmitting.value = true
   try {
-    await updateTask(criteriaTask.value.id, { description: criteriaDescription.value })
+    const result = await updateTask(criteriaTask.value.id, { description: criteriaDescription.value, regenerate_criteria: true })
     isCriteriaDialogOpen.value = false
+    if (result?.job) {
+      clearJob()
+      isUpdateProgressOpen.value = true
+      beginPolling(result.job)
+    }
   } catch (e) {
     toast({
       title: t('tasks.toasts.regenerateFailed'),
@@ -200,10 +216,29 @@ async function fetchAccountOptions() {
 }
 
 onMounted(fetchAccountOptions)
+
+watch(() => updateJob.value?.status, async (status, previous) => {
+  if (!status || status === previous) return
+  if (status === 'completed') {
+    const completed = updateJob.value
+    await fetchTasks({ silent: true })
+    toast({ title: t('tasks.toasts.updated'), description: completed?.message })
+    if (updateJob.value?.job_id === completed?.job_id) {
+      isUpdateProgressOpen.value = false
+      clearJob()
+    }
+  } else if (status === 'failed') {
+    toast({ title: t('tasks.toasts.updateFailed'), description: updateJob.value?.error || undefined, variant: 'destructive' })
+  }
+})
+watch(pollingError, (error) => {
+  if (error) toast({ title: t('tasks.toasts.progressFailed'), description: error.message, variant: 'destructive' })
+})
 </script>
 
 <template>
   <div>
+    <TaskGenerationDialog v-model:open="isUpdateProgressOpen" :job="updateJob" />
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-2xl font-bold text-gray-800">
         {{ t('tasks.title') }}

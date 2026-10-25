@@ -17,19 +17,16 @@ from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_generation_runner import (
     build_task_create,
-    build_criteria_filename,
-    save_generated_criteria,
     run_ai_generation_job,
+    run_ai_update_job,
 )
 from src.services.task_payloads import serialize_task, serialize_tasks
 from src.domain.models.task import TaskCreate, TaskUpdate, TaskGenerateRequest
-from src.prompt_utils import generate_criteria
 from src.utils import resolve_task_log_path
 from src.services.account_strategy_service import normalize_account_strategy
 from src.infrastructure.persistence.storage_names import build_result_filename
 from src.services.price_history_service import delete_price_snapshots
 from src.services.result_storage_service import delete_result_file_records
-from src.infrastructure.paths import safe_child_path
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 async def _reload_scheduler_if_needed(
@@ -47,11 +44,11 @@ def _has_keyword_rules(rules) -> bool:
 def _validate_final_account_strategy(existing_task, task_update: TaskUpdate) -> None:
     account_state_file = (
         task_update.account_state_file
-        if task_update.account_state_file is not None
+        if "account_state_file" in task_update.model_fields_set
         else existing_task.account_state_file
     )
     account_strategy = normalize_account_strategy(
-        task_update.account_strategy,
+        task_update.account_strategy if task_update.account_strategy is not None else existing_task.account_strategy,
         account_state_file,
     )
     task_update.account_strategy = account_strategy
@@ -145,9 +142,9 @@ async def update_task(
     task_update: TaskUpdate,
     service: TaskService = Depends(get_task_service),
     scheduler_service: SchedulerService = Depends(get_scheduler_service),
+    generation_service: TaskGenerationService = Depends(get_task_generation_service),
 ):
     """更新任务"""
-    generated_path = None
     try:
         existing_task = await service.get_task(task_id)
         if not existing_task:
@@ -158,7 +155,7 @@ async def update_task(
         target_mode = task_update.decision_mode or current_mode
         description_changed = (
             task_update.description is not None
-            and task_update.description != existing_task.description
+            and task_update.description.strip() != (existing_task.description or "").strip()
         )
         switched_to_ai = current_mode != "ai" and target_mode == "ai"
 
@@ -170,50 +167,25 @@ async def update_task(
             )
             if not _has_keyword_rules(final_rules):
                 raise HTTPException(status_code=400, detail="关键词模式下至少需要一个关键词。")
-        if target_mode == "ai" and (description_changed or switched_to_ai):
-            print(f"检测到任务 {task_id} 需要刷新 AI 标准文件，开始重新生成...")
+        if target_mode == "ai" and (description_changed or switched_to_ai or task_update.regenerate_criteria):
+            description_for_ai = task_update.description if task_update.description is not None else existing_task.description
+            if not str(description_for_ai or "").strip():
+                raise HTTPException(status_code=400, detail="AI 模式下详细需求不能为空。")
             try:
-                description_for_ai = (
-                    task_update.description
-                    if task_update.description is not None
-                    else existing_task.description
-                )
-                if not str(description_for_ai or "").strip():
-                    raise HTTPException(status_code=400, detail="AI 模式下详细需求不能为空。")
-                output_filename = build_criteria_filename(task_update.keyword or existing_task.keyword)
-                print(f"目标文件路径: {output_filename}")
-                print("开始调用 AI 生成新的分析标准...")
-                generated_criteria = await generate_criteria(
-                    user_description=description_for_ai,
-                    reference_file_path="prompts/macbook_criteria.txt"
-                )
-                if not generated_criteria or len(generated_criteria.strip()) == 0:
-                    print("AI 返回的内容为空")
-                    raise HTTPException(status_code=500, detail="AI 未能生成分析标准，返回内容为空。")
-                print(f"保存新的分析标准到: {output_filename}")
-                await save_generated_criteria(output_filename, generated_criteria)
-                generated_path = output_filename
-                print(f"新的分析标准已保存")
-                task_update.ai_prompt_criteria_file = output_filename
-                print(f"已更新 ai_prompt_criteria_file 字段为: {output_filename}")
-            except HTTPException:
-                raise
-            except Exception as e:
-                error_msg = f"重新生成 criteria 文件时出错: {str(e)}"
-                print(error_msg)
-                import traceback
-                print(traceback.format_exc())
-                raise HTTPException(status_code=500, detail=error_msg)
-        try:
-            task = await service.update_task(task_id, task_update)
-        except BaseException:
-            if generated_path:
-                try:
-                    os.remove(safe_child_path("prompts", os.path.basename(generated_path)))
-                except (OSError, ValueError):
-                    pass
-            raise
-        await _reload_scheduler_if_needed(service, scheduler_service)
+                job = await generation_service.create_job(task_update.task_name or existing_task.task_name, task_id=task_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            generation_service.track(run_ai_update_job(
+                job_id=job.job_id, existing_task=existing_task, changes=task_update,
+                task_service=service, scheduler_service=scheduler_service, generation_service=generation_service,
+            ))
+            return JSONResponse(status_code=202, content={
+                "message": "正在后台生成分析标准，完成后保存修改；原任务暂时保留。",
+                "job": job.model_dump(mode="json"),
+            })
+        task = await service.update_task(task_id, task_update)
+        if any(getattr(task, field) != getattr(existing_task, field) for field in ("cron", "enabled", "task_name")):
+            await _reload_scheduler_if_needed(service, scheduler_service)
         return {"message": "任务更新成功", "task": serialize_task(task, scheduler_service)}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

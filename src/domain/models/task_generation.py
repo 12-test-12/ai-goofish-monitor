@@ -26,6 +26,8 @@ class TaskGenerationJob(BaseModel):
 
     job_id: str
     task_name: str
+    operation: Literal["create", "update"] = "create"
+    task_id: Optional[int] = None
     status: TaskGenerationStatus = "queued"
     message: str = "任务已排队，等待开始。"
     current_step: Optional[str] = None

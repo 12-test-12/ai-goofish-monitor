@@ -38,6 +38,8 @@ export interface TaskGenerationStep {
 export interface TaskGenerationJob {
   job_id: string;
   task_name: string;
+  operation?: 'create' | 'update';
+  task_id?: number | null;
   status: TaskGenerationStatus;
   message: string;
   current_step: string | null;
@@ -52,8 +54,10 @@ export interface TaskCreateResponse {
   job?: TaskGenerationJob;
 }
 
+export type TaskUpdateResponse = TaskCreateResponse;
+
 // For PATCH requests, all fields are optional
-export type TaskUpdate = Partial<Omit<Task, 'id' | 'next_run_at'>>;
+export type TaskUpdate = Partial<Omit<Task, 'id' | 'next_run_at'>> & { regenerate_criteria?: boolean };
 
 // For task creation
 export interface TaskGenerateRequest {

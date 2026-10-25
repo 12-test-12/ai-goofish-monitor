@@ -228,6 +228,8 @@ class TaskUpdate(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    regenerate_criteria: bool = Field(default=False, exclude=True)
+
     task_name: Optional[str] = None
     enabled: Optional[bool] = None
     keyword: Optional[str] = None

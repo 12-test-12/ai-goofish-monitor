@@ -64,6 +64,9 @@ class SqliteTaskRepository(TaskRepository):
     async def update(self, task_id: int, changes: TaskUpdate) -> Optional[Task]:
         return await asyncio.to_thread(self._update_sync, task_id, changes)
 
+    async def update_if_unchanged(self, task_id: int, changes: TaskUpdate, expected: Task) -> Optional[Task]:
+        return await asyncio.to_thread(self._update_sync, task_id, changes, expected)
+
     async def delete(self, task_id: int) -> bool:
         return await asyncio.to_thread(self._delete_sync, task_id)
 
@@ -131,14 +134,17 @@ class SqliteTaskRepository(TaskRepository):
             conn.commit()
         return task.model_copy(update={"id": task_id})
 
-    def _update_sync(self, task_id: int, changes: TaskUpdate) -> Optional[Task]:
+    def _update_sync(self, task_id: int, changes: TaskUpdate, expected: Task | None = None) -> Optional[Task]:
         bootstrap_sqlite_storage(self.db_path, legacy_config_file=self.legacy_config_file)
         with sqlite_connection(self.db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is None:
                 return None
-            task = _row_to_task(row).apply_update(changes)
+            current = _row_to_task(row)
+            if expected is not None and current.model_dump(exclude={"is_running"}) != expected.model_dump(exclude={"is_running"}):
+                raise ValueError("任务在 AI 生成期间已被修改，请重新打开编辑后重试。")
+            task = current.apply_update(changes)
             values = self._task_values(task)
             # Read/merge/write under the same write transaction; never resurrect a deleted row.
             conn.execute("""

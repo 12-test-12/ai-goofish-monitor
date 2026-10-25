@@ -111,3 +111,28 @@ def test_generate_criteria_closes_ai_client_after_ai_failure(monkeypatch, tmp_pa
         asyncio.run(prompt_utils.generate_criteria("need a gpu", str(reference_file)))
 
     assert close_state["closed"] is True
+
+
+def test_slow_criteria_generation_times_out_cancels_request_and_closes_client(monkeypatch, tmp_path):
+    events = []
+    reference = tmp_path / "reference.txt"
+    reference.write_text("reference", encoding="utf-8")
+
+    class SlowClient:
+        def is_available(self):
+            return True
+
+        async def _call_ai(self, *args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                events.append("request cancelled")
+
+        async def close(self):
+            events.append("closed")
+
+    monkeypatch.setattr(prompt_utils, "AIClient", SlowClient)
+    monkeypatch.setattr(prompt_utils, "CRITERIA_GENERATION_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(RuntimeError, match="已停止等待"):
+        asyncio.run(prompt_utils.generate_criteria("requirements", str(reference)))
+    assert events == ["request cancelled", "closed"]

@@ -41,9 +41,9 @@ const helperText = computed(() => {
   <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
     <DialogContent class="sm:max-w-[560px]">
       <DialogHeader>
-        <DialogTitle>{{ t('tasks.generation.title') }}</DialogTitle>
+        <DialogTitle>{{ t(job?.operation === 'update' ? 'tasks.generation.updateTitle' : 'tasks.generation.title') }}</DialogTitle>
         <DialogDescription>
-          {{ t('tasks.generation.description') }}
+          {{ t(job?.operation === 'update' ? 'tasks.generation.updateDescription' : 'tasks.generation.description') }}
         </DialogDescription>
       </DialogHeader>
 

@@ -4,6 +4,7 @@ import type {
   TaskGenerateRequest,
   TaskGenerationJob,
   TaskUpdate,
+  TaskUpdateResponse,
 } from '@/types/task.d.ts'
 import { http } from '@/lib/http'
 
@@ -26,7 +27,7 @@ export async function getTaskGenerationJob(jobId: string): Promise<TaskGeneratio
   return result.job
 }
 
-export async function updateTask(taskId: number, data: TaskUpdate): Promise<Task> {
+export async function updateTask(taskId: number, data: TaskUpdate): Promise<TaskUpdateResponse> {
   const result = await http(`/api/tasks/${taskId}`, {
     method: 'PATCH',
     headers: {
@@ -34,7 +35,7 @@ export async function updateTask(taskId: number, data: TaskUpdate): Promise<Task
     },
     body: JSON.stringify(data),
   })
-  return result.task
+  return result
 }
 
 export async function startTask(taskId: number): Promise<void> {

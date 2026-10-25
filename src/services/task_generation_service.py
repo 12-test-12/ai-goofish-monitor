@@ -29,16 +29,27 @@ class TaskGenerationService:
         self._lock = threading.Lock()
         self._workers: set[threading.Thread] = set()
 
-    async def create_job(self, task_name: str) -> TaskGenerationJob:
+    async def create_job(self, task_name: str, *, task_id: int | None = None) -> TaskGenerationJob:
+        operation = "update" if task_id is not None else "create"
         job = TaskGenerationJob(
             job_id=uuid4().hex,
             task_name=task_name,
+            operation=operation,
+            task_id=task_id,
             steps=[
-                TaskGenerationStep(key=key, label=label)
+                TaskGenerationStep(key=key, label=(
+                    {"prepare": "接收修改请求", "task": "保存任务修改"}.get(key, label)
+                    if operation == "update" else label
+                ))
                 for key, label in self._step_specs
             ],
         )
         with self._lock:
+            if task_id is not None and any(
+                item.task_id == task_id and item.status in {"queued", "running"}
+                for item in self._jobs.values()
+            ):
+                raise ValueError("该任务正在生成 AI 分析标准，请等待当前生成结束后重试。")
             self._jobs[job.job_id] = job
             return deepcopy(job)
 

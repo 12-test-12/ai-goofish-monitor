@@ -32,6 +32,10 @@ class TaskRepository(ABC):
         task = await self.find_by_id(task_id)
         return await self.save(task.apply_update(changes)) if task else None
 
+    async def update_if_unchanged(self, task_id: int, changes: TaskUpdate, expected: Task) -> Optional[Task]:
+        """Commit a generated edit only if its configuration snapshot is current."""
+        raise NotImplementedError("当前任务仓储不支持生成完成后的并发检查")
+
     @abstractmethod
     async def delete(self, task_id: int) -> bool:
         """删除任务"""

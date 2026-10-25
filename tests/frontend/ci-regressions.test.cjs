@@ -8,6 +8,35 @@ const { test } = require('node:test')
 const root = path.resolve(__dirname, '../..')
 const frontendRequire = createRequire(path.join(root, 'web-ui/package.json'))
 
+test('editing tasks handles queued AI updates without treating the job as a saved task', async () => {
+  const ts = frontendRequire('typescript')
+  const vue = frontendRequire('vue')
+  const existing = { id: 7, task_name: 'camera', description: 'old' }
+  let result = { message: 'queued', job: { job_id: 'update-job', status: 'queued', operation: 'update' } }
+  const api = { updateTask: async () => result }
+  const context = vm.createContext({
+    exports: {}, console,
+    require(name) {
+      if (name === 'vue') return { ...vue, onMounted() {} }
+      if (name === '@/api/tasks') return api
+      if (name === '@/composables/useWebSocket') return { useWebSocket: () => ({ on() {} }) }
+      return frontendRequire(name)
+    },
+  })
+  const source = fs.readFileSync(path.join(root, 'web-ui/src/composables/useTasks.ts'), 'utf8')
+  vm.runInContext(ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, context)
+  const tasks = context.exports.useTasks()
+  tasks.tasks.value = [existing]
+  assert.equal((await tasks.updateTask(7, { description: 'new' })).job.job_id, 'update-job')
+  assert.equal(tasks.tasks.value.length, 1)
+  assert.equal(tasks.tasks.value[0].description, 'old')
+  result = { message: 'saved', task: { ...existing, description: 'new' } }
+  await tasks.updateTask(7, { description: 'new' })
+  assert.equal(tasks.tasks.value[0].description, 'new')
+})
+
 test('extension captures only HTTP(S) tabs on Goofish hosts', async () => {
   let activeUrl
   const context = vm.createContext({

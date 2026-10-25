@@ -7,6 +7,7 @@ const zhCNExtra = {
       deleted: '任务已删除',
       deleteFailed: '删除任务失败',
       updateFailed: '更新任务失败',
+      updated: '任务修改已保存',
       descriptionRequired: '详细需求不能为空',
       regenerateFailed: '重新生成失败',
       startFailed: '启动任务失败',
@@ -22,6 +23,8 @@ const zhCNExtra = {
     deleteDialog: { title: '删除任务', descriptionWithTask: '确定删除任务「{task}」吗？此操作不可恢复。', descriptionFallback: '确定删除该任务吗？此操作不可恢复。', confirm: '确认删除' },
     generation: {
       title: '任务生成进度',
+      updateTitle: '正在更新 AI 分析标准',
+      updateDescription: '修改已提交，AI 生成完成后自动保存。生成期间保留原任务；失败或超时不会覆盖原有设置。',
       description: 'AI 正在生成分析标准并创建任务。',
       helperFailed: '生成失败后会保留这个弹窗，方便你查看错误原因。',
       helperRunning: '任务已转入后台生成，你可以停留在这里查看步骤，也可以先关闭弹窗。',

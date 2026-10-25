@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import aiofiles
 
-from src.domain.models.task import TaskCreate, TaskGenerateRequest
+from src.domain.models.task import Task, TaskCreate, TaskGenerateRequest, TaskUpdate
 from src.prompt_utils import generate_criteria
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -145,3 +145,43 @@ async def run_ai_generation_job(
             # A rejected path must never prevent the job from reaching failed.
             pass
         await generation_service.fail(job_id, f"AI 任务生成失败: {exc}")
+
+
+async def run_ai_update_job(
+    *, job_id: str, existing_task: Task, changes: TaskUpdate,
+    task_service: TaskService, scheduler_service: SchedulerService,
+    generation_service: TaskGenerationService,
+) -> None:
+    output_filename = build_criteria_filename(changes.keyword or existing_task.keyword)
+    criteria_saved = False
+    task = None
+    try:
+        await generation_service.advance(job_id, "prepare", "已接收修改，生成完成前继续保留原任务。")
+
+        async def progress(step_key: str, message: str) -> None:
+            await generation_service.advance(job_id, step_key, message)
+
+        criteria = await generate_criteria(
+            user_description=changes.description if changes.description is not None else existing_task.description,
+            reference_file_path="prompts/macbook_criteria.txt", progress_callback=progress,
+        )
+        await generation_service.advance(job_id, "persist", "正在保存新的分析标准。")
+        await save_generated_criteria(output_filename, criteria)
+        criteria_saved = True
+        changes = changes.model_copy(update={"ai_prompt_criteria_file": output_filename})
+        await generation_service.advance(job_id, "task", "正在保存任务修改。")
+        task = await task_service.update_task_if_unchanged(existing_task.id, changes, existing_task)
+        if any(getattr(task, field) != getattr(existing_task, field) for field in ("cron", "enabled", "task_name")):
+            try:
+                await reload_scheduler(task_service, scheduler_service)
+            except Exception as exc:
+                await generation_service.complete(job_id, task, f"修改已保存，但定时调度刷新失败，请重启软件：{exc}")
+                return
+        await generation_service.complete(job_id, task, f"任务“{task.task_name}”修改已保存。")
+    except Exception as exc:
+        if task is None and criteria_saved:
+            try:
+                os.remove(safe_child_path("prompts", os.path.basename(output_filename)))
+            except (OSError, ValueError):
+                pass
+        await generation_service.fail(job_id, f"任务修改未保存，原任务保留：{exc}")

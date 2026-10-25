@@ -37,6 +37,12 @@ class TaskService:
         """删除任务"""
         return await self.repository.delete(task_id)
 
+    async def update_task_if_unchanged(self, task_id: int, task_update: TaskUpdate, expected: Task) -> Task:
+        task = await self.repository.update_if_unchanged(task_id, task_update, expected)
+        if task is None:
+            raise ValueError("任务已被删除，生成结果未保存。")
+        return task
+
     async def update_task_status(self, task_id: int, is_running: bool) -> Task:
         """更新任务运行状态"""
         task_update = TaskUpdate(is_running=is_running)

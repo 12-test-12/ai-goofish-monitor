@@ -66,13 +66,17 @@ export function useTasks() {
   async function updateTask(taskId: number, data: TaskUpdate) {
     error.value = null
     try {
-      const updatedTask = await taskApi.updateTask(taskId, data)
-      const index = tasks.value.findIndex((task) => task.id === updatedTask.id)
-      if (index >= 0) {
-        tasks.value[index] = { ...tasks.value[index], ...updatedTask }
-      } else {
-        tasks.value.push(updatedTask)
+      const result = await taskApi.updateTask(taskId, data)
+      const updatedTask = result.task
+      if (updatedTask) {
+        const index = tasks.value.findIndex((task) => task.id === updatedTask.id)
+        if (index >= 0) {
+          tasks.value[index] = { ...tasks.value[index], ...updatedTask }
+        } else {
+          tasks.value.push(updatedTask)
+        }
       }
+      return result
     } catch (e) {
       if (e instanceof Error) {
         error.value = e

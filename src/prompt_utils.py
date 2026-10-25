@@ -1,4 +1,5 @@
 import json
+import asyncio
 import os
 import re
 import sys
@@ -37,6 +38,7 @@ META_PROMPT_TEMPLATE = """
 ProgressCallback = Callable[[str, str], Awaitable[None]]
 # 参考标准大约一千多 token。思考模型还会先输出推理，800 会把正文截掉。
 CRITERIA_MAX_OUTPUT_TOKENS = 8192
+CRITERIA_GENERATION_TIMEOUT_SECONDS = 90
 _THINK_BLOCK_RE = re.compile(
     r"<(?:think|thinking)>.*?</(?:think|thinking)>",
     re.IGNORECASE | re.DOTALL,
@@ -133,8 +135,16 @@ async def generate_criteria(
         )
 
         await _report_progress(progress_callback, "llm", "正在调用 AI 生成分析标准。")
-        return await _request_generated_text(ai_client, prompt)
-    except Exception as exc:
+        try:
+            return await asyncio.wait_for(
+                _request_generated_text(ai_client, prompt), timeout=CRITERIA_GENERATION_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"AI 分析标准生成超过 {CRITERIA_GENERATION_TIMEOUT_SECONDS} 秒，已停止等待。"
+                "请检查模型服务响应速度后重试；原有任务和分析标准保留。"
+            ) from exc
+    except BaseException as exc:
         active_error = exc
         raise
     finally:

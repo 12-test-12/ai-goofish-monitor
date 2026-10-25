@@ -7,6 +7,7 @@ const enUSExtra = {
       deleted: 'Task deleted.',
       deleteFailed: 'Failed to delete task.',
       updateFailed: 'Failed to update task.',
+      updated: 'Task changes saved.',
       descriptionRequired: 'Detailed requirement is required.',
       regenerateFailed: 'Failed to regenerate criteria.',
       startFailed: 'Failed to start task.',
@@ -22,6 +23,8 @@ const enUSExtra = {
     deleteDialog: { title: 'Delete Task', descriptionWithTask: 'Delete task "{task}"? This action cannot be undone.', descriptionFallback: 'Delete this task? This action cannot be undone.', confirm: 'Delete' },
     generation: {
       title: 'Task Generation Progress',
+      updateTitle: 'Updating AI Analysis Criteria',
+      updateDescription: 'Changes will be saved after generation completes. The original task remains active if generation fails or times out.',
       description: 'AI is generating analysis criteria and creating the task.',
       helperFailed: 'The dialog stays open after a failure so you can inspect the error.',
       helperRunning: 'The task is generating in the background. You can watch progress here or close this dialog.',
