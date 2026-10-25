@@ -94,3 +94,45 @@ test('toast state reacts to add, update, dismiss and removal without unwrapping 
   assert.equal(toasts.value.length, 1)
   assert.equal(toasts.value[0].title, 'new')
 })
+
+test('useTaskGenerationJob discards stale in-flight responses and prevents race conditions', async () => {
+  const ts = frontendRequire('typescript')
+  const vue = frontendRequire('vue')
+  let resolveJob1
+  const job1Promise = new Promise((resolve) => { resolveJob1 = resolve })
+  const api = {
+    getTaskGenerationJob: async (jobId) => {
+      if (jobId === 'job-1') return await job1Promise
+      return { job_id: 'job-2', status: 'completed' }
+    },
+  }
+  const context = vm.createContext({
+    exports: {},
+    console,
+    window: {
+      setTimeout: (fn) => setTimeout(fn, 0),
+      clearTimeout: (id) => clearTimeout(id),
+    },
+    require(name) {
+      if (name === 'vue') return { ...vue, onScopeDispose() {} }
+      if (name === '@/api/tasks') return api
+      return frontendRequire(name)
+    },
+  })
+  const source = fs.readFileSync(path.join(root, 'web-ui/src/composables/useTaskGenerationJob.ts'), 'utf8')
+  vm.runInContext(ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, context)
+  const { activeJob, beginPolling, clearJob, refreshJob } = context.exports.useTaskGenerationJob()
+  beginPolling({ job_id: 'job-1', status: 'running' })
+  // In-flight refresh for job-1
+  const refreshPromise = refreshJob()
+  // Before job-1 returns, user cleared job
+  clearJob()
+  assert.equal(activeJob.value, null)
+  // job-1 finishes late
+  resolveJob1({ job_id: 'job-1', status: 'completed' })
+  await refreshPromise
+  // activeJob must still be null, not overwritten by stale job-1
+  assert.equal(activeJob.value, null)
+})

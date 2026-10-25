@@ -30,6 +30,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const form = ref<any>({})
+const loadedTaskId = ref<number | null>(null)
 const accountStrategy = ref<'auto' | 'fixed' | 'rotate'>('auto')
 const selectedAccountStateFile = ref(AUTO_ACCOUNT_VALUE)
 const keywordRulesInput = ref('')
@@ -96,6 +97,10 @@ function parseKeywordText(text: string): string[] {
 watch(() => [props.mode, props.initialData, props.defaultValues, props.defaultAccount], () => {
   const defaultValues = props.defaultValues || {}
   if (props.mode === 'edit' && props.initialData) {
+    if (loadedTaskId.value === props.initialData.id) {
+      return
+    }
+    loadedTaskId.value = props.initialData.id ?? null
     form.value = {
       ...props.initialData,
       ...defaultValues,
@@ -119,6 +124,7 @@ watch(() => [props.mode, props.initialData, props.defaultValues, props.defaultAc
     const cronVal = defaultValues.cron ?? props.initialData.cron ?? ''
     cronMode.value = isPresetCronValue(cronVal) ? 'preset' : 'custom'
   } else {
+    loadedTaskId.value = null
     form.value = {
       task_name: '',
       keyword: '',

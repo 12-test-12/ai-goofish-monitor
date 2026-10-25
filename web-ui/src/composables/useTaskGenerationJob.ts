@@ -13,6 +13,7 @@ export function useTaskGenerationJob() {
   const pollingError = ref<Error | null>(null)
   const isPolling = ref(false)
   let pollTimer: ReturnType<typeof window.setTimeout> | null = null
+  let pollSeq = 0
 
   function clearTimer() {
     if (pollTimer === null) return
@@ -21,9 +22,14 @@ export function useTaskGenerationJob() {
   }
 
   async function refreshJob() {
-    if (!activeJob.value) return
+    if (!activeJob.value || !isPolling.value) return
+    const currentSeq = ++pollSeq
+    const targetJobId = activeJob.value.job_id
     try {
-      const nextJob = await getTaskGenerationJob(activeJob.value.job_id)
+      const nextJob = await getTaskGenerationJob(targetJobId)
+      if (pollSeq !== currentSeq || !isPolling.value || activeJob.value?.job_id !== targetJobId) {
+        return
+      }
       activeJob.value = nextJob
       pollingError.value = null
       if (isTerminalStatus(nextJob.status)) {
@@ -33,6 +39,9 @@ export function useTaskGenerationJob() {
       }
       scheduleNextPoll()
     } catch (error) {
+      if (pollSeq !== currentSeq || !isPolling.value || activeJob.value?.job_id !== targetJobId) {
+        return
+      }
       isPolling.value = false
       clearTimer()
       pollingError.value = error as Error
@@ -47,6 +56,7 @@ export function useTaskGenerationJob() {
   }
 
   function beginPolling(job: TaskGenerationJob) {
+    pollSeq++
     activeJob.value = job
     pollingError.value = null
     if (isTerminalStatus(job.status)) {
@@ -59,6 +69,7 @@ export function useTaskGenerationJob() {
   }
 
   function clearJob() {
+    pollSeq++
     activeJob.value = null
     pollingError.value = null
     isPolling.value = false

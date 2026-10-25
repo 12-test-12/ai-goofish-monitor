@@ -37,6 +37,9 @@
 - `src/services/task_generation_service.py`：作业状态和同任务重复请求检查。
 - `src/infrastructure/persistence/sqlite_task_repository.py`：事务内并发检查。
 - `src/prompt_utils.py`：90 秒 AI 请求等待上限。
+- `src/api/routes/accounts.py`：账号文件原子写入与创建排他保护。
+- `web-ui/src/components/tasks/TaskForm.vue`：同任务编辑草稿保护，避免后台刷新覆盖输入。
+- `web-ui/src/composables/useTaskGenerationJob.ts`：轮询响应序号校验，避免迟到响应竞争覆盖作业状态。
 - `web-ui/src/views/TasksView.vue`：编辑进度与完成反馈。
 
-本次说明记录已完成的保存优化，不表示后续审查发现的表单草稿覆盖、账号原子写入、进度响应竞争等问题已经修复。
+后续跟进修复：已补齐表单草稿覆盖保护、账号文件原子落盘与并发排他，以及生成进度轮询的响应竞争防护。

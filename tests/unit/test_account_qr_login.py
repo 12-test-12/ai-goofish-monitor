@@ -179,6 +179,13 @@ def test_json_import_remains_available(api):
     client, _ = api
     assert client.post("/api/accounts", json={"name": "manual", "content": '{"cookies": []}'}).status_code == 200
     assert client.get("/api/accounts/manual").json()["name"] == "manual"
+    # Duplicate creation returns 409
+    assert client.post("/api/accounts", json={"name": "manual", "content": '{"cookies": []}'}).status_code == 409
+    # Atomic update works
+    assert client.put("/api/accounts/manual", json={"content": '{"cookies": [{"name": "unb"}]}'}).status_code == 200
+    assert "unb" in client.get("/api/accounts/manual").json()["content"]
+    # Update non-existent returns 404
+    assert client.put("/api/accounts/missing", json={"content": '{"cookies": []}'}).status_code == 404
 
 
 def test_qr_endpoints_require_web_authentication():

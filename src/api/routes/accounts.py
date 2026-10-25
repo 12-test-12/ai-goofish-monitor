@@ -1,9 +1,11 @@
 """
 闲鱼账号管理路由
 """
+import asyncio
 import json
 import os
 import re
+import tempfile
 import aiofiles
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -129,6 +131,37 @@ async def get_account(name: str):
     return {"name": account_name, "path": path, "content": content}
 
 
+def _atomic_write_account(path: str, content: str, *, exclusive: bool = False) -> None:
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    if exclusive and os.path.exists(path):
+        raise FileExistsError(f"账号文件已存在: {path}")
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=parent, prefix=".acc-", suffix=".tmp", delete=False
+        ) as f:
+            tmp = f.name
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        if exclusive:
+            try:
+                os.link(tmp, path)
+            except (OSError, NotImplementedError, AttributeError):
+                if os.path.exists(path):
+                    raise FileExistsError(f"账号文件已存在: {path}")
+                os.replace(tmp, path)
+        else:
+            os.replace(tmp, path)
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 @router.post("", response_model=dict)
 async def create_account(data: AccountCreate):
     account_name = _validate_name(data.name)
@@ -138,8 +171,10 @@ async def create_account(data: AccountCreate):
     path = _account_path(account_name)
     if os.path.exists(path):
         raise HTTPException(status_code=409, detail="账号已存在")
-    async with aiofiles.open(path, "w", encoding="utf-8") as f:
-        await f.write(data.content)
+    try:
+        await asyncio.to_thread(_atomic_write_account, path, data.content, exclusive=True)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="账号已存在")
     return {"message": "账号已添加", "name": account_name, "path": path}
 
 
@@ -152,8 +187,7 @@ async def update_account(name: str, data: AccountUpdate):
     path = _account_path(account_name)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="账号不存在")
-    async with aiofiles.open(path, "w", encoding="utf-8") as f:
-        await f.write(data.content)
+    await asyncio.to_thread(_atomic_write_account, path, data.content, exclusive=False)
     return {"message": "账号已更新", "name": account_name, "path": path}
 
 
