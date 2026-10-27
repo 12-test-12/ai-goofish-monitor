@@ -18,6 +18,9 @@ export function useResults() {
   const totalItems = ref(0)
   const page = ref(1)
   const limit = ref(100)
+  const crawlDate = ref('')
+  const totalPages = computed(() => Math.max(1, Math.ceil(totalItems.value / limit.value)))
+  let resultRequest = 0
   const blacklistKeywords = ref<string[]>([])
   const taskNameByKeyword = ref<Record<string, string>>({})
   const isFileOptionsReady = ref(false)
@@ -29,8 +32,9 @@ export function useResults() {
   
   const STORAGE_KEY_FILTERS = 'resultFilters'
 
-  function loadPersistedFilters(): Required<Omit<GetResultContentParams, 'page' | 'limit'>> {
-    const defaults: Required<Omit<GetResultContentParams, 'page' | 'limit'>> = {
+  type ResultFilters = Required<Omit<GetResultContentParams, 'page' | 'limit' | 'crawl_date' | 'group_by_day'>>
+  function loadPersistedFilters(): ResultFilters {
+    const defaults: ResultFilters = {
       recommended_only: false,
       ai_recommended_only: false,
       keyword_recommended_only: false,
@@ -45,7 +49,7 @@ export function useResults() {
     return defaults
   }
 
-  const filters = reactive<Required<Omit<GetResultContentParams, 'page' | 'limit'>>>(loadPersistedFilters())
+  const filters = reactive<ResultFilters>(loadPersistedFilters())
 
   const isLoading = ref(false)
   const error = ref<Error | null>(null)
@@ -86,9 +90,11 @@ export function useResults() {
   }
 
   async function fetchResults() {
+    const request = ++resultRequest
     if (!selectedFile.value) {
       results.value = []
       totalItems.value = 0
+      isLoading.value = false
       return
     }
 
@@ -97,17 +103,22 @@ export function useResults() {
     try {
       const data = await resultsApi.getResultContent(selectedFile.value, {
         ...filters,
+        crawl_date: crawlDate.value || undefined,
+        group_by_day: true,
         page: page.value,
         limit: limit.value,
       })
+      if (request !== resultRequest) return
       results.value = data.items
       totalItems.value = data.total_items
+      if (page.value > totalPages.value) page.value = totalPages.value
     } catch (e) {
+      if (request !== resultRequest) return
       if (e instanceof Error) error.value = e
       results.value = []
       totalItems.value = 0
     } finally {
-      isLoading.value = false
+      if (request === resultRequest) isLoading.value = false
     }
   }
 
@@ -195,7 +206,9 @@ export function useResults() {
 
   function exportSelectedResults() {
     if (!selectedFile.value) return
-    resultsApi.downloadResultExport(selectedFile.value, { ...filters })
+    resultsApi.downloadResultExport(selectedFile.value, {
+      ...filters, crawl_date: crawlDate.value || undefined, group_by_day: true,
+    })
   }
 
   async function deleteSelectedFile(filename?: string) {
@@ -254,7 +267,11 @@ export function useResults() {
   watch(filters, (val) => {
     localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(val))
   }, { deep: true })
-  watch([selectedFile, filters], fetchResults, { deep: true })
+  watch([selectedFile, filters, crawlDate], () => {
+    if (page.value !== 1) page.value = 1
+    else fetchResults()
+  }, { deep: true })
+  watch(page, fetchResults)
   watch(selectedFile, () => {
     fetchInsights()
     fetchBlacklistRules()
@@ -299,6 +316,9 @@ export function useResults() {
     results,
     insights,
     totalItems,
+    page,
+    totalPages,
+    crawlDate,
     filters,
     isLoading,
     error,

@@ -101,6 +101,12 @@ export interface ResultItem {
   "卖家信息": SellerInfo;
   ai_analysis: AiAnalysis;
   price_insight?: PriceInsight;
+  occurrence?: {
+    seen_count: number;
+    seen_days: number;
+    first_seen_at: string | null;
+    last_seen_at: string | null;
+  };
   _status?: 'active' | 'hidden' | 'expired';
   _effective_hidden?: boolean;
   _hidden_reason?: 'manual' | 'rule' | 'expired' | null;

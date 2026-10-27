@@ -23,6 +23,10 @@ const {
   files,
   selectedFile,
   results,
+  totalItems,
+  page,
+  totalPages,
+  crawlDate,
   insights,
   filters,
   isLoading,
@@ -157,7 +161,28 @@ async function handleSaveBlacklistRules() {
 
     <ResultsInsightsPanel :insights="insights" :selected-task-label="selectedTaskLabel" />
 
+    <div class="app-surface mb-5 flex flex-wrap items-center gap-3 p-4">
+      <label for="crawl-date" class="text-sm font-medium text-slate-700">{{ t('results.history.date') }}</label>
+      <input id="crawl-date" v-model="crawlDate" type="date" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" />
+      <Button variant="outline" :disabled="!crawlDate" @click="crawlDate = ''">{{ t('results.history.allDates') }}</Button>
+      <span class="text-sm text-slate-500">{{ t('results.history.hint') }}</span>
+    </div>
+
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3" aria-live="polite">
+      <p class="text-sm text-slate-600">{{ t('results.history.pagination', { total: totalItems, page, pages: totalPages }) }}</p>
+      <nav class="flex gap-2" :aria-label="t('results.history.navigation')">
+        <Button variant="outline" :disabled="isLoading || page <= 1" @click="page--">{{ t('results.history.previous') }}</Button>
+        <Button variant="outline" :disabled="isLoading || page >= totalPages" @click="page++">{{ t('results.history.next') }}</Button>
+      </nav>
+    </div>
+
     <ResultsGrid :results="results" :is-loading="isLoading" @toggle-block="toggleItemBlock" />
+
+    <nav v-if="totalPages > 1" class="mt-6 flex items-center justify-center gap-3" :aria-label="t('results.history.navigation')">
+      <Button variant="outline" :disabled="isLoading || page <= 1" @click="page--">{{ t('results.history.previous') }}</Button>
+      <span class="text-sm text-slate-600">{{ page }} / {{ totalPages }}</span>
+      <Button variant="outline" :disabled="isLoading || page >= totalPages" @click="page++">{{ t('results.history.next') }}</Button>
+    </nav>
 
     <Dialog v-model:open="isDeleteDialogOpen">
       <DialogContent class="sm:max-w-[420px]">

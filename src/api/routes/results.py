@@ -6,6 +6,8 @@ from fastapi.responses import FileResponse
 import asyncio
 from pathlib import Path
 from enum import Enum
+from datetime import date
+from typing import Annotated
 
 from pydantic import BaseModel
 from urllib.parse import quote
@@ -107,6 +109,8 @@ async def get_result_file_content(
     include_hidden: bool = Query(False),
     sort_by: str = Query("crawl_time"),
     sort_order: str = Query("desc"),
+    crawl_date: Annotated[date | None, Query()] = None,
+    group_by_day: Annotated[bool, Query()] = False,
 ):
     """读取指定的 .jsonl 文件内容，支持分页、筛选和排序"""
     if ai_recommended_only and keyword_recommended_only:
@@ -126,6 +130,8 @@ async def get_result_file_content(
             page=page,
             limit=limit,
             include_hidden=include_hidden,
+            crawl_date=crawl_date.isoformat() if crawl_date else None,
+            group_by_day=group_by_day,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -161,6 +167,8 @@ async def export_result_file_content(
     include_hidden: bool = Query(False),
     sort_by: str = Query("crawl_time"),
     sort_order: str = Query("desc"),
+    crawl_date: Annotated[date | None, Query()] = None,
+    group_by_day: Annotated[bool, Query()] = False,
 ):
     if ai_recommended_only and keyword_recommended_only:
         raise HTTPException(status_code=400, detail="AI推荐筛选与关键词推荐筛选不能同时开启。")
@@ -179,6 +187,8 @@ async def export_result_file_content(
             sort_by=sort_by,
             sort_order=sort_order,
             include_hidden=include_hidden,
+            crawl_date=crawl_date.isoformat() if crawl_date else None,
+            group_by_day=group_by_day,
         )
     except HTTPException:
         raise

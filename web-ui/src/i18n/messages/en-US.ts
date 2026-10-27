@@ -171,7 +171,18 @@ const enUS = {
       blacklistRulesPlaceholder: 'Example: intel\npro 13\nre:\\b(pm|pro[\\s-]?max)\\b',
       confirmBlacklistSave: 'Save Rules',
     },
+    history: {
+      date: 'Crawl date',
+      allDates: 'All dates',
+      hint: 'Grouped by first crawl date, sorted within each day. Browse pages for older records.',
+      pagination: '{total} records · Page {page} of {pages}',
+      navigation: 'Result pages',
+      previous: 'Previous',
+      next: 'Next',
+    },
     grid: {
+      unknownDate: 'Unknown crawl date',
+      dayCount: '{count} on this page',
       loading: 'Loading results...',
       empty: 'No items matched the current filters.',
     },
@@ -199,6 +210,9 @@ const enUS = {
       noTrend: 'No trend data to render yet',
     },
     card: {
+      repeated: 'Watch closely · Seen {count} times / {days} days',
+      firstSeen: 'First seen: {time}',
+      lastSeen: 'Last seen: {time}',
       curated: 'Curated',
       strongRecommend: 'Strong Buy',
       notRecommended: 'Skip',

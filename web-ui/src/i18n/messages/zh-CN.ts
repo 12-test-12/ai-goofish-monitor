@@ -174,6 +174,17 @@ const zhCN = {
     grid: {
       loading: '正在加载结果...',
       empty: '没有找到符合条件的商品记录。',
+      unknownDate: '采集日期未知',
+      dayCount: '本页 {count} 条',
+    },
+    history: {
+      date: '采集日期',
+      allDates: '全部日期',
+      hint: '按首次采集日期分组，每天可单独排序；历史记录可翻页查看。',
+      pagination: '共 {total} 条 · 第 {page} / {pages} 页',
+      navigation: '结果分页',
+      previous: '上一页',
+      next: '下一页',
     },
     insights: {
       defaultTitle: '价格走势洞察',
@@ -199,6 +210,9 @@ const zhCN = {
       noTrend: '暂无可绘制的趋势数据',
     },
     card: {
+      repeated: '重点关注 · 出现 {count} 次 / {days} 天',
+      firstSeen: '首次出现：{time}',
+      lastSeen: '最近出现：{time}',
       curated: '精选',
       strongRecommend: '强烈推荐',
       notRecommended: '不建议购买',

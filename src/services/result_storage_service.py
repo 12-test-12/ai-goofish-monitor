@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import datetime
+from datetime import date, datetime
 
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_connection import sqlite_connection
@@ -84,10 +84,25 @@ def _build_query_conditions(
     return " AND ".join(conditions), params
 
 
-def _sort_expression(sort_by: str, sort_order: str) -> str:
+def _sort_expression(sort_by: str, sort_order: str, group_by_day: bool = False) -> str:
     column = SORT_COLUMN_MAP.get(sort_by, SORT_COLUMN_MAP["crawl_time"])
     direction = "ASC" if sort_order == "asc" else "DESC"
+    if group_by_day:
+        day_direction = direction if sort_by == "crawl_time" else "DESC"
+        return f"substr(crawl_time, 1, 10) {day_direction}, {column} {direction}, id {direction}"
     return f"(CASE WHEN status = 'active' THEN 0 ELSE 1 END), {column} {direction}, id {direction}"
+
+
+def _filter_crawl_date(where: str, params: list, crawl_date: str | None) -> tuple[str, list]:
+    if not crawl_date:
+        return where, params
+    try:
+        if date.fromisoformat(crawl_date).isoformat() != crawl_date:
+            raise ValueError
+    except ValueError:
+        raise ValueError("采集日期必须是有效的 YYYY-MM-DD 日期") from None
+    # Crawl timestamps are stored in the scraper's local calendar, matching the UI groups.
+    return where + " AND substr(crawl_time, 1, 10) = ?", [*params, crawl_date]
 
 
 def _load_blacklist_keywords_from_conn(conn, filename: str) -> list[str]:
@@ -303,6 +318,8 @@ async def query_result_records(
     page: int,
     limit: int,
     include_hidden: bool = False,
+    crawl_date: str | None = None,
+    group_by_day: bool = False,
 ) -> tuple[int, list[dict]]:
     return await asyncio.to_thread(
         _query_result_records_sync,
@@ -314,6 +331,8 @@ async def query_result_records(
         page,
         limit,
         include_hidden,
+        crawl_date,
+        group_by_day,
     )
 
 
@@ -326,15 +345,18 @@ def _query_result_records_sync(
     page: int,
     limit: int,
     include_hidden: bool,
+    crawl_date: str | None = None,
+    group_by_day: bool = False,
 ) -> tuple[int, list[dict]]:
     bootstrap_sqlite_storage()
     offset = max(page - 1, 0) * limit
     with sqlite_connection() as conn:
         conn.execute("BEGIN")
         where, params, keywords = _query_scope(conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden)
+        where, params = _filter_crawl_date(where, params, crawl_date)
         total = conn.execute(f"SELECT COUNT(*) FROM result_items WHERE {where}", params).fetchone()[0]
         rows = conn.execute(
-            f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order)} LIMIT ? OFFSET ?",
+            f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order, group_by_day)} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         )
         records = [_decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) for row in rows]
@@ -397,14 +419,16 @@ def _build_result_ndjson_sync(filename: str) -> str:
 
 
 def iter_result_batches(filename: str, *, ai_recommended_only=False, keyword_recommended_only=False,
-                        sort_by="crawl_time", sort_order="desc", include_hidden=False, batch_size=200):
+                        sort_by="crawl_time", sort_order="desc", include_hidden=False, batch_size=200,
+                        crawl_date: str | None = None, group_by_day: bool = False):
     """Consume in a single worker thread, keeping one stable read snapshot."""
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
         try:
             conn.execute("BEGIN")
             where, params, keywords = _query_scope(conn, filename, ai_recommended_only, keyword_recommended_only, include_hidden)
-            cursor = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order)}", params)
+            where, params = _filter_crawl_date(where, params, crawl_date)
+            cursor = conn.execute(f"SELECT raw_json, status FROM result_items WHERE {where} ORDER BY {_sort_expression(sort_by, sort_order, group_by_day)}", params)
             while rows := cursor.fetchmany(batch_size):
                 yield [_decorate_record_visibility(_parse_raw_record(row["raw_json"]), row["status"], keywords) for row in rows]
         finally:

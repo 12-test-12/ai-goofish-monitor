@@ -23,23 +23,25 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 
-const info = props.item.商品信息
-const seller = props.item.卖家信息
-const ai = props.item.ai_analysis
-const priceInsight = props.item.price_insight
+const info = computed(() => props.item.商品信息)
+const seller = computed(() => props.item.卖家信息 || {})
+const ai = computed(() => props.item.ai_analysis)
+const priceInsight = computed(() => props.item.price_insight)
+const occurrence = computed(() => props.item.occurrence)
+const isRepeated = computed(() => (occurrence.value?.seen_count || 1) > 1)
 
-const isRecommended = ai?.is_recommended === true
+const isRecommended = computed(() => ai.value?.is_recommended === true)
 const recommendationStatus = computed(() => {
-  if (ai?.is_recommended === true) return { label: t('results.card.strongRecommend'), color: 'bg-emerald-500', icon: CheckCircle2, text: 'text-emerald-600', bg: 'bg-emerald-50' }
-  if (ai?.is_recommended === false) return { label: t('results.card.notRecommended'), color: 'bg-rose-500', icon: XCircle, text: 'text-rose-600', bg: 'bg-rose-50' }
+  if (ai.value?.is_recommended === true) return { label: t('results.card.strongRecommend'), color: 'bg-emerald-500', icon: CheckCircle2, text: 'text-emerald-600', bg: 'bg-emerald-50' }
+  if (ai.value?.is_recommended === false) return { label: t('results.card.notRecommended'), color: 'bg-rose-500', icon: XCircle, text: 'text-rose-600', bg: 'bg-rose-50' }
   return { label: t('results.card.pending'), color: 'bg-amber-500', icon: AlertCircle, text: 'text-amber-600', bg: 'bg-amber-50' }
 })
 
-const imageUrl = info.商品图片列表?.[0] || info.商品主图链接 || ''
-const crawlTime = props.item.爬取时间
+const imageUrl = computed(() => info.value.商品图片列表?.[0] || info.value.商品主图链接 || '')
+const crawlTime = computed(() => props.item.爬取时间
   ? formatDateTime(props.item.爬取时间, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-  : t('common.unknown')
-const matchScore = ai?.value_score ?? 0
+  : t('common.unknown'))
+const matchScore = computed(() => ai.value?.value_score ?? 0)
 const isHidden = computed(() => props.item._effective_hidden === true || props.item._status === 'hidden')
 const isRuleHidden = computed(() => props.item._hidden_reason === 'rule')
 const canToggleBlock = computed(() => props.item._hidden_reason !== 'rule' && props.item._hidden_reason !== 'expired')
@@ -53,7 +55,7 @@ const expanded = ref(false)
 </script>
 
 <template>
-  <Card class="group flex flex-col h-full border-none shadow-glass hover:shadow-card-hover transition-all duration-300 rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm" :class="{ 'opacity-50': isHidden }">
+  <Card class="group flex flex-col h-full border-none shadow-glass hover:shadow-card-hover transition-all duration-300 rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm" :class="{ 'opacity-50': isHidden, 'ring-2 ring-amber-400': isRepeated && !isHidden }">
     <!-- Image Header -->
     <div class="relative aspect-[4/3] overflow-hidden">
       <div class="absolute inset-0 bg-slate-200 animate-pulse" v-if="!imageUrl"></div>
@@ -115,6 +117,11 @@ const expanded = ref(false)
     </CardHeader>
 
     <CardContent class="p-4 pt-2 flex-grow">
+      <div v-if="isRepeated" class="mb-3 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <p class="font-bold">{{ t('results.card.repeated', { count: occurrence?.seen_count, days: occurrence?.seen_days }) }}</p>
+        <p v-if="occurrence?.first_seen_at">{{ t('results.card.firstSeen', { time: formatDateTime(occurrence.first_seen_at) }) }}</p>
+        <p v-if="occurrence?.last_seen_at">{{ t('results.card.lastSeen', { time: formatDateTime(occurrence.last_seen_at) }) }}</p>
+      </div>
       <!-- AI Insight Section -->
       <div class="rounded-xl p-3 border border-slate-100" :class="recommendationStatus.bg">
         <div class="flex items-center justify-between mb-2">

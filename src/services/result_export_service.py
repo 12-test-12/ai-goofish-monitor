@@ -23,6 +23,12 @@ EXPORT_HEADERS = [
     "性价比分数",
     "性价比标签",
     "商品链接",
+    "采集时间",
+    "出现次数",
+    "出现天数",
+    "首次出现时间",
+    "最近出现时间",
+    "重点关注",
 ]
 
 
@@ -50,6 +56,7 @@ def write_results_csv(records, output, *, include_header=True) -> None:
         seller = record.get("卖家信息", {}) or {}
         ai_analysis = record.get("ai_analysis", {}) or {}
         price_insight = record.get("price_insight", {}) or {}
+        occurrence = record.get("occurrence") or {}
         row = {
                 "任务名称": record.get("任务名称", ""),
                 "搜索关键字": record.get("搜索关键字", ""),
@@ -68,5 +75,11 @@ def write_results_csv(records, output, *, include_header=True) -> None:
                 "性价比分数": ai_analysis.get("value_score", price_insight.get("deal_score", "")),
                 "性价比标签": ai_analysis.get("value_summary", price_insight.get("deal_label", "")),
                 "商品链接": item.get("商品链接", ""),
+                "采集时间": record.get("爬取时间", ""),
+                "出现次数": occurrence.get("seen_count", 1),
+                "出现天数": occurrence.get("seen_days", 1),
+                "首次出现时间": occurrence.get("first_seen_at", ""),
+                "最近出现时间": occurrence.get("last_seen_at", ""),
+                "重点关注": "是" if occurrence.get("seen_count", 1) > 1 else "否",
         }
         writer.writerow({key: _safe_csv_cell(value) for key, value in row.items()})

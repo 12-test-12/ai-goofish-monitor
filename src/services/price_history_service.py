@@ -223,6 +223,29 @@ def delete_price_snapshots(keyword: str) -> int:
     return int(cursor.rowcount or 0)
 
 
+def load_item_occurrences(keyword: str, item_ids: set[str]) -> dict[str, dict]:
+    """Summarize all retained runs, independently of the price chart's 30-day window."""
+    if not item_ids:
+        return {}
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        conn.execute("CREATE TEMP TABLE occurrence_items (item_id TEXT PRIMARY KEY)")
+        conn.executemany("INSERT INTO occurrence_items VALUES (?)", ((value,) for value in item_ids))
+        rows = conn.execute(
+            """SELECT item_id, COUNT(*) AS seen_count,
+                      COUNT(DISTINCT snapshot_day) AS seen_days,
+                      MIN(snapshot_time) AS first_seen_at, MAX(snapshot_time) AS last_seen_at
+               FROM price_snapshots
+               WHERE keyword_slug = ? AND item_id IN (SELECT item_id FROM occurrence_items)
+               GROUP BY item_id""",
+            (normalize_keyword_slug(keyword),),
+        ).fetchall()
+    return {str(row["item_id"]): {
+        "seen_count": row["seen_count"], "seen_days": row["seen_days"],
+        "first_seen_at": row["first_seen_at"], "last_seen_at": row["last_seen_at"],
+    } for row in rows}
+
+
 def _dedupe_latest(records: Iterable[dict], group_key: str) -> list[dict]:
     latest_by_key: dict[str, dict] = {}
     for record in records:
