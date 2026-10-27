@@ -30,6 +30,7 @@ ZIP 包含 EXE、使用说明、构建信息和 SHA256 校验值。解压后运�
 如果升级后历史为空，请先检查数据目录是否改变。较早的桌面版可能将数据保存在 `%LOCALAPPDATA%\GoofishMonitor\data\app.sqlite3`，当前默认保存在 EXE 同目录的 `data\app.sqlite3`。两个目录的记录不会自动合并，不要用旧库直接覆盖含有新记录的数据库。
 
 ![历史翻页与重复出现标记（隔离测试数据）](../web-ui/screenshots/results-history-desktop.png)
+![手机端历史翻页与重点关注标记](../web-ui/screenshots/results-history-mobile.png)
 
 ## 本地构建
 

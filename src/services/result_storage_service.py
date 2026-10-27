@@ -93,16 +93,22 @@ def _sort_expression(sort_by: str, sort_order: str, group_by_day: bool = False) 
     return f"(CASE WHEN status = 'active' THEN 0 ELSE 1 END), {column} {direction}, id {direction}"
 
 
-def _filter_crawl_date(where: str, params: list, crawl_date: str | None) -> tuple[str, list]:
+def _filter_crawl_date(where: str, params: list, crawl_date: str | date | None) -> tuple[str, list]:
     if not crawl_date:
         return where, params
+    if isinstance(crawl_date, date):
+        date_str = crawl_date.isoformat()
+    elif isinstance(crawl_date, str):
+        date_str = crawl_date.strip()
+    else:
+        raise ValueError("采集日期必须是有效的 YYYY-MM-DD 日期")
     try:
-        if date.fromisoformat(crawl_date).isoformat() != crawl_date:
+        if date.fromisoformat(date_str).isoformat() != date_str:
             raise ValueError
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValueError("采集日期必须是有效的 YYYY-MM-DD 日期") from None
     # Crawl timestamps are stored in the scraper's local calendar, matching the UI groups.
-    return where + " AND substr(crawl_time, 1, 10) = ?", [*params, crawl_date]
+    return where + " AND substr(crawl_time, 1, 10) = ?", [*params, date_str]
 
 
 def _load_blacklist_keywords_from_conn(conn, filename: str) -> list[str]:

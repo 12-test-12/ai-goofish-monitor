@@ -163,8 +163,14 @@ async function handleSaveBlacklistRules() {
 
     <div class="app-surface mb-5 flex flex-wrap items-center gap-3 p-4">
       <label for="crawl-date" class="text-sm font-medium text-slate-700">{{ t('results.history.date') }}</label>
-      <input id="crawl-date" v-model="crawlDate" type="date" class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm" />
-      <Button variant="outline" :disabled="!crawlDate" @click="crawlDate = ''">{{ t('results.history.allDates') }}</Button>
+      <input
+        id="crawl-date"
+        v-model="crawlDate"
+        type="date"
+        :disabled="!selectedFile || isLoading"
+        class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+      />
+      <Button variant="outline" :disabled="!crawlDate || !selectedFile || isLoading" @click="crawlDate = ''">{{ t('results.history.allDates') }}</Button>
       <span class="text-sm text-slate-500">{{ t('results.history.hint') }}</span>
     </div>
 

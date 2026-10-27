@@ -111,3 +111,29 @@ def test_repeat_counts_span_all_history_and_count_each_run_once(history_client):
     rows = list(csv.DictReader(io.StringIO(history_client.get(URL + "/export").text)))
     exported = next(row for row in rows if row["商品ID"] == "repeated")
     assert exported["出现次数"] == "3" and exported["重点关注"] == "是"
+
+def test_occurrences_helper_reentrancy_and_export_robustness(history_client):
+    from datetime import date
+    from src.services.price_history_service import load_item_occurrences
+    from src.services.result_export_service import build_results_csv
+    from src.services.result_storage_service import _filter_crawl_date
+
+    # Consecutively call load_item_occurrences (re-entrancy / no table already exists error)
+    first_call = load_item_occurrences('camera', {'repeated', 12345})
+    second_call = load_item_occurrences('camera', {'repeated'})
+    assert isinstance(first_call, dict)
+    assert isinstance(second_call, dict)
+
+    # Date object support in _filter_crawl_date
+    w, p = _filter_crawl_date('1=1', [], date(2026, 10, 25))
+    assert 'substr(crawl_time, 1, 10) = ?' in w
+    assert p == ['2026-10-25']
+
+    # Export robustness when occurrence fields are None
+    raw_record = {
+        '商品信息': {'商品ID': 'none-test'},
+        'occurrence': {'seen_count': None, 'seen_days': None, 'first_seen_at': None, 'last_seen_at': None},
+    }
+    csv_text = build_results_csv([raw_record])
+    assert 'none-test' in csv_text
+

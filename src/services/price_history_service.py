@@ -229,8 +229,9 @@ def load_item_occurrences(keyword: str, item_ids: set[str]) -> dict[str, dict]:
         return {}
     bootstrap_sqlite_storage()
     with sqlite_connection() as conn:
-        conn.execute("CREATE TEMP TABLE occurrence_items (item_id TEXT PRIMARY KEY)")
-        conn.executemany("INSERT INTO occurrence_items VALUES (?)", ((value,) for value in item_ids))
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS occurrence_items (item_id TEXT PRIMARY KEY)")
+        conn.execute("DELETE FROM occurrence_items")
+        conn.executemany("INSERT INTO occurrence_items VALUES (?)", ((str(value),) for value in item_ids))
         rows = conn.execute(
             """SELECT item_id, COUNT(*) AS seen_count,
                       COUNT(DISTINCT snapshot_day) AS seen_days,
@@ -240,6 +241,7 @@ def load_item_occurrences(keyword: str, item_ids: set[str]) -> dict[str, dict]:
                GROUP BY item_id""",
             (normalize_keyword_slug(keyword),),
         ).fetchall()
+        conn.execute("DELETE FROM occurrence_items")
     return {str(row["item_id"]): {
         "seen_count": row["seen_count"], "seen_days": row["seen_days"],
         "first_seen_at": row["first_seen_at"], "last_seen_at": row["last_seen_at"],

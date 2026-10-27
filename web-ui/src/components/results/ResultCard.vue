@@ -23,7 +23,7 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 
-const info = computed(() => props.item.商品信息)
+const info = computed(() => props.item.商品信息 || ({} as Record<string, any>))
 const seller = computed(() => props.item.卖家信息 || {})
 const ai = computed(() => props.item.ai_analysis)
 const priceInsight = computed(() => props.item.price_insight)
@@ -119,8 +119,8 @@ const expanded = ref(false)
     <CardContent class="p-4 pt-2 flex-grow">
       <div v-if="isRepeated" class="mb-3 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
         <p class="font-bold">{{ t('results.card.repeated', { count: occurrence?.seen_count, days: occurrence?.seen_days }) }}</p>
-        <p v-if="occurrence?.first_seen_at">{{ t('results.card.firstSeen', { time: formatDateTime(occurrence.first_seen_at) }) }}</p>
-        <p v-if="occurrence?.last_seen_at">{{ t('results.card.lastSeen', { time: formatDateTime(occurrence.last_seen_at) }) }}</p>
+        <p v-if="occurrence?.first_seen_at">{{ t('results.card.firstSeen', { time: formatDateTime(occurrence.first_seen_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }) }}</p>
+        <p v-if="occurrence?.last_seen_at">{{ t('results.card.lastSeen', { time: formatDateTime(occurrence.last_seen_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }) }}</p>
       </div>
       <!-- AI Insight Section -->
       <div class="rounded-xl p-3 border border-slate-100" :class="recommendationStatus.bg">
